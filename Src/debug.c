@@ -29,6 +29,7 @@ int _write(int file, char* data, int len) {
     return len;
 }
 
+
 #ifdef USE_FREERTOS
 QueueHandle_t printQueue;
 #endif

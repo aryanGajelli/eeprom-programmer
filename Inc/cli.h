@@ -3,6 +3,6 @@
 
 #include "stm32g4xx_hal.h"
 
-HAL_StatusTypeDef CLI_Init(void);
+HAL_StatusTypeDef cliInit(void);
 
 #endif  // CLI_H

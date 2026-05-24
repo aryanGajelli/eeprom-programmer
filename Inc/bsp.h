@@ -10,4 +10,5 @@
 #define CLOCK_PROG_I2C_HANDLE hi2c1
 #define CLK_IN_TIM_HANDLE htim2
 #define ONE_HZ_TIM_HANDLE htim3
+#define STATS_TIM_HANDLE htim4
 #endif  // __BSP_H__

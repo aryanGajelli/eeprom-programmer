@@ -74,7 +74,6 @@ excludes:
 # Include directories (directories containing .h or .hpp files)
 # If a CubeMX makefile is present it will automatically include the include directories from that makefile.
 includeDirectories: 
-  - ..\\Inc\**
   - Inc/**
   - Core/Inc/**
   - Core/Lib/**
@@ -92,7 +91,6 @@ sourceFiles:
   - Src/**
   - Core/Src/**
   - Core/Lib/**
-  - ..\\Src/**
 
 
 # When no makefile is present it will show a warning pop-up.

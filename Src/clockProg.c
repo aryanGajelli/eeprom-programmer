@@ -1,7 +1,10 @@
 #include <stdbool.h>
+#include <stdlib.h>
 
 #include "FreeRTOS.h"
+#include "FreeRTOS_CLI.h"
 #include "Si5351.h"
+#include "assert.h"
 #include "bsp.h"
 #include "debug.h"
 #include "stm32g4xx_hal.h"
@@ -22,87 +25,136 @@ Si5351Config_t m_si5351Config = {
     .pllb_configured = false,
     .pllb_freq = 0};
 
-void reg_print(uint8_t reg) {
-    uint8_t value;
-    read8(reg, &value);
-    uprintf("Register 0x%02X: 0x%02X\n", reg, value);
+void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef* htim) {
+    if (htim == &CLK_IN_TIM_HANDLE) {
+        Frequency = __HAL_TIM_GET_COMPARE(htim, TIM_CHANNEL_1);
+    }
 }
 
-void clockProgTask(void* pvParameters) {
-    uprintf("Starting clockProgTask\n");
-    HAL_StatusTypeDef status = Si5351Init();
-    if (status != HAL_OK) {
-        uprintf("Si5351Init failed: %d\n", status);
-        vTaskDelete(NULL);
+/*********************************************************************************************/
+BaseType_t cmd_clk_init(char* writeBuffer, size_t writeBufferLength, const char* commandString) {
+    if (Si5351Init() != HAL_OK) {
+        COMMAND_OUTPUT("Failed to initialize Si5351\n");
+        return pdFALSE;
     }
-    // reg_print(SI5351_REGISTER_0_DEVICE_STATUS);
 
     // Keep PLL VCO in the 600..900 MHz range (AN619): 25 MHz * 24 = 600 MHz.
     // Use PLLA multiplier 24 to get the lowest VCO allowed (600 MHz),
     // then set multisynth to 900 and R-divider to 128 to produce ~5.2 kHz.
-    status = setupPLLInt(SI5351_PLL_A, 30);
-    // status = setupPLLInt(SI5351_PLL_B, 36);
-    if (status != HAL_OK) {
-        uprintf("setupPLLInt failed: %d\n", status);
-        vTaskDelete(NULL);
+    if (setupPLLInt(SI5351_PLL_A, 30) != HAL_OK) {
+        COMMAND_OUTPUT("Failed to set up PLL A\n");
+        return pdFALSE;
     }
 
-    // Configure CLK0..CLK2 to use a large multisynth divider (900)
-    // and an R-divider of 128 to reach the lowest practical output.
-    status = setupMultisynth(0, SI5351_PLL_A, 75, 1, 3500);
-    if (status != HAL_OK) {
-        uprintf("setupMultisynth(0) failed: %d\n", status);
-        vTaskDelete(NULL);
+    // CLK0: 10 MHz = (25MHz + small offset) * 30 / (75 + 1 * 3500)
+    if (setupMultisynth(0, SI5351_PLL_A, 75, 1, 3500) != HAL_OK) {
+        COMMAND_OUTPUT("Failed to set up multisynth 0\n");
+        return pdFALSE;
     }
 
-    status = setupMultisynth(1, SI5351_PLL_A, 450, 0, 1);
-    if (status != HAL_OK) {
-        uprintf("setupMultisynth(1) failed: %d\n", status);
-        vTaskDelete(NULL);
-    }
-
-    status = setupMultisynth(2, SI5351_PLL_A, 90, 1, 2950);
-    if (status != HAL_OK) {
-        uprintf("setupMultisynth(2) failed: %d\n", status);
-        vTaskDelete(NULL);
-    }
-
-    // // Apply maximum R-divider to drop the freq further (~128x)
-    // status = setupRdiv(0, SI5351_R_DIV_128);
-    // if (status != HAL_OK) {
-    //     uprintf("setupRdiv(0) failed: %d\n", status);
-    //     vTaskDelete(NULL);
-    // }
-    // status = setupRdiv(1, SI5351_R_DIV_128);
-    // if (status != HAL_OK) {
-    //     uprintf("setupRdiv(1) failed: %d\n", status);
-    //     vTaskDelete(NULL);
-    // }
-    // status = setupRdiv(2, SI5351_R_DIV_128);
-    // if (status != HAL_OK) {
-    //     uprintf("setupRdiv(2) failed: %d\n", status);
-    //     vTaskDelete(NULL);
-    // }
-
-    // Enable outputs and keep them on continuously.
-    bool outputsEnabled = true;
-    enableOutputs(outputsEnabled);
-    while (1) {
-        // outputsEnabled = !outputsEnabled;
-        // Keep LED lit to show outputs are enabled.
-        HAL_GPIO_TogglePin(LD2_GPIO_Port, LD2_Pin);
-
-        // if (Frequency < 1000) {
-        //     uprintf("Frequency: %.3f Hz\n", Frequency * 1.0f);
-        // } else if (Frequency < 1000000) {
-        //     uprintf("Frequency: %.3f kHz\n", Frequency / 1000.0f);
-        // } else {
-        //     uprintf("Frequency: %.6f MHz\n", Frequency / 1000000.0f);
-        // }
-
-        vTaskDelay(pdMS_TO_TICKS(500));
-    }
+    COMMAND_OUTPUT("Clocks initialized successfully\n");
+    return pdFALSE;
 }
+/*********************************************************************************************/
+BaseType_t cmd_enable_clocks(char* writeBuffer, size_t writeBufferLength, const char* commandString) {
+    enableOutputs(true);
+    return pdFALSE;
+}
+/*********************************************************************************************/
+BaseType_t cmd_disable_clocks(char* writeBuffer, size_t writeBufferLength, const char* commandString) {
+    enableOutputs(false);
+    return pdFALSE;
+}
+/*********************************************************************************************/
+BaseType_t cmd_frequency(char* writeBuffer, size_t writeBufferLength, const char* commandString) {
+    if (Frequency < 1000) {
+        COMMAND_OUTPUT("Frequency: %.3f Hz\n", Frequency * 1.0f);
+    } else if (Frequency < 1000000) {
+        COMMAND_OUTPUT("Frequency: %.3f kHz\n", Frequency / 1000.0f);
+    } else {
+        COMMAND_OUTPUT("Frequency: %.3f MHz\n", Frequency / 1000000.0f);
+    }
+    return pdFALSE;
+}
+/*********************************************************************************************/
+BaseType_t cmd_set_pllA(char* writeBuffer, size_t writeBufferLength, const char* commandString) {
+    BaseType_t paramLen;
+    const char* prm_mul = FreeRTOS_CLIGetParameter(commandString, 1, &paramLen);
+    const char* prm_num = FreeRTOS_CLIGetParameter(commandString, 2, &paramLen);
+    const char* prm_div = FreeRTOS_CLIGetParameter(commandString, 3, &paramLen);
+
+    uint32_t mul = atol(prm_mul);
+    uint32_t num = atol(prm_num);
+    uint32_t div = atol(prm_div);
+
+    if (setupPLL(SI5351_PLL_A, mul, num, div) != HAL_OK) {
+        COMMAND_OUTPUT("Failed to set PLL A configuration to %lu/%lu/%lu\n", mul, num, div);
+    }
+   
+    return pdFALSE;
+}
+/*********************************************************************************************/
+BaseType_t cmd_set_multisynth(char* writeBuffer, size_t writeBufferLength, const char* commandString) {
+    BaseType_t paramLen;
+    const char* prm_ch = FreeRTOS_CLIGetParameter(commandString, 1, &paramLen);
+    const char* prm_mul = FreeRTOS_CLIGetParameter(commandString, 2, &paramLen);
+    const char* prm_num = FreeRTOS_CLIGetParameter(commandString, 3, &paramLen);
+    const char* prm_div = FreeRTOS_CLIGetParameter(commandString, 4, &paramLen);
+
+ 
+    uint32_t ch = atoi(prm_ch);
+    uint32_t mul = atol(prm_mul);
+    uint32_t num = atol(prm_num);
+    uint32_t div = atol(prm_div);
+
+    if (setupMultisynth(ch, SI5351_PLL_A, mul, num, div) != HAL_OK) {
+        COMMAND_OUTPUT("Failed to set multisynth %lu configuration to %lu/%lu/%lu\n", ch, mul, num, div);
+    }
+   
+    return pdFALSE;
+}
+/*********************************************************************************************/
+
+static const CLI_Command_Definition_t xCommandList[] = {
+    {
+        "clk_init",
+        "clk_init:\r\n  Initialize the Si5351 and set to 10MHz on CLK0 and enable clocks\r\n",
+        cmd_clk_init,
+        0 /* Number of parameters */
+    },
+    {
+        "enableClocks",
+        "enableClocks:\r\n  Enable the clocks\r\n",
+        cmd_enable_clocks,
+        0 /* Number of parameters */
+    },
+    {
+        "disableClocks",
+        "disableClocks:\r\n  Disable the clocks\r\n",
+        cmd_disable_clocks,
+        0 /* Number of parameters */
+    },
+    {
+        "freq",
+        "freq:\r\n  Display the current frequency on PA0\r\n",
+        cmd_frequency,
+        0 /* Number of parameters */
+    },
+    {
+        "set_pllA",
+        "set_pllA:\r\n  PLL A = 25MHz * mul / (num + div)\r\n  PLL A must be in [600MHz, 900MHz]\r\n",
+        cmd_set_pllA,
+        3 /* Number of parameters */
+    },
+    {
+        "set_multisynth",
+        "set_multisynth:\r\n  CLK_ch = PLLA * mul / (num + div)\r\n  ch must be in [0, 2]\r\n",
+        cmd_set_multisynth,
+        4 /* Number of parameters */
+    },
+    {
+        .pcCommand = NULL /* simply used as delimeter for end of array*/
+    }};
 
 HAL_StatusTypeDef timerInit(void) {
     HAL_TIM_Base_Start(&ONE_HZ_TIM_HANDLE);
@@ -111,8 +163,19 @@ HAL_StatusTypeDef timerInit(void) {
     return HAL_OK;
 }
 
-void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef* htim) {
-    if (htim == &CLK_IN_TIM_HANDLE) {
-        Frequency = __HAL_TIM_GET_COMPARE(htim, TIM_CHANNEL_1);
+HAL_StatusTypeDef clockProgCliInit(void) {
+    /* Register all commands */
+    for (int i = 0; xCommandList[i].pcCommand != NULL; i++) {
+        if (FreeRTOS_CLIRegisterCommand(&xCommandList[i]) != pdPASS) {
+            return HAL_ERROR;
+        }
     }
+    return HAL_OK;
+}
+
+HAL_StatusTypeDef clockProgInit(void) {
+    ASSERT_STATUS(clockProgCliInit());
+    ASSERT_STATUS(timerInit());
+
+    return HAL_OK;
 }

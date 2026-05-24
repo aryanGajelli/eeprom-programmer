@@ -54,13 +54,6 @@ const osThreadAttr_t mainTaskName_attributes = {
   .priority = (osPriority_t) osPriorityNormal,
   .stack_size = 1024 * 4
 };
-/* Definitions for clockProgTaskName */
-osThreadId_t clockProgTaskNameHandle;
-const osThreadAttr_t clockProgTaskName_attributes = {
-  .name = "clockProgTaskName",
-  .priority = (osPriority_t) osPriorityAboveNormal,
-  .stack_size = 1024 * 4
-};
 /* Definitions for printTaskName */
 osThreadId_t printTaskNameHandle;
 const osThreadAttr_t printTaskName_attributes = {
@@ -82,7 +75,6 @@ const osThreadAttr_t cliTaskName_attributes = {
 /* USER CODE END FunctionPrototypes */
 
 void mainTask(void *argument);
-extern void clockProgTask(void *argument);
 extern void printTask(void *argument);
 extern void cliTask(void *argument);
 
@@ -151,9 +143,6 @@ void MX_FREERTOS_Init(void) {
   /* Create the thread(s) */
   /* creation of mainTaskName */
   mainTaskNameHandle = osThreadNew(mainTask, NULL, &mainTaskName_attributes);
-
-  /* creation of clockProgTaskName */
-  clockProgTaskNameHandle = osThreadNew(clockProgTask, NULL, &clockProgTaskName_attributes);
 
   /* creation of printTaskName */
   printTaskNameHandle = osThreadNew(printTask, NULL, &printTaskName_attributes);

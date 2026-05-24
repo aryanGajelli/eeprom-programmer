@@ -3,6 +3,6 @@
 
 #include "stm32g4xx_hal.h"
 
-HAL_StatusTypeDef timerInit(void);
+HAL_StatusTypeDef clockProgInit(void);
 
 #endif // CLOCKPROG_H

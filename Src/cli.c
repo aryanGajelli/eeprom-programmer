@@ -4,6 +4,7 @@
 
 #include "FreeRTOS.h"
 #include "FreeRTOS_CLI.h"
+#include "assert.h"
 #include "bsp.h"
 #include "debug.h"
 #include "stm32g4xx_hal.h"
@@ -21,11 +22,13 @@
 QueueHandle_t uartRxQueue;
 
 // Buffer to receive uart characters (1 byte)
-uint8_t uartDMA_rxBuffer = '\000';
+#define UART_RX_RECV_SIZE (1)
+uint8_t uartDMA_rxBuffer[UART_RX_RECV_SIZE] = {'\000'};
+
 HAL_StatusTypeDef uartStartReceiving(UART_HandleTypeDef* huart) {
     if (huart == &DEBUG_UART_HANDLE) {
         __HAL_UART_FLUSH_DRREGISTER(huart);  // Clear the buffer to prevent overrun
-        return HAL_UART_Receive_DMA(huart, &uartDMA_rxBuffer, 1);
+        return HAL_UART_Receive_DMA(huart, uartDMA_rxBuffer, UART_RX_RECV_SIZE);
     }
     return HAL_ERROR;
 }
@@ -35,16 +38,11 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef* huart) {
 
     xHigherPriorityTaskWoken = pdFALSE;
 
-    xQueueSendFromISR(uartRxQueue, &uartDMA_rxBuffer, &xHigherPriorityTaskWoken);
+    xQueueSendFromISR(uartRxQueue, uartDMA_rxBuffer, &xHigherPriorityTaskWoken);
 
     if (xHigherPriorityTaskWoken) {
         portYIELD();
     }
-}
-
-HAL_StatusTypeDef CLI_Init(void) {
-    // Initialize the CLI here
-    return HAL_OK;
 }
 
 #define INPUT_BUFFER_SIZE (100)
@@ -62,7 +60,10 @@ void cliTask(void* pvParameters) {
     char* outputBuffer = FreeRTOS_CLIGetOutputBuffer();
     uprintf("CLI Started. Enter command, or help for more info\n");
     uprintf("%s", PS1);
-
+    // while (1) {
+    //     // Wait for a moment to allow other tasks to run
+    //     vTaskDelay(1);
+    // }
     while (1) {
         char rxBuffer;
         if (xQueueReceive(uartRxQueue, &rxBuffer, portMAX_DELAY) != pdTRUE) {
@@ -131,4 +132,212 @@ void cliTask(void* pvParameters) {
             }
         }
     }
+}
+
+#ifdef STATS_TIM_HANDLE
+/*
+ * Run time stats timer setup
+ * A 16 bit timer with clock source APB1 should be configured in cube
+ */
+
+uint32_t counterVal = 0;  // store the counter value to help protect againts 16 bit overflow
+uint16_t lastCounterVal = 0;
+
+// stat timer frequency is this value times tick freqency
+#define STAT_TIMER_TICK_FREQUENCY_MULTIPLIER 20
+
+void configureTimerForRunTimeStats(void) {
+    // Compute the right prescaler to set timer frequency
+    RCC_ClkInitTypeDef clkconfig;
+    uint32_t uwTimclock, uwAPB1Prescaler = 0U;
+    uint32_t uwPrescalerValue = 0U;
+    uint32_t timerFrequency;
+    uint32_t pFLatency;
+
+    /* Get clock configuration */
+    HAL_RCC_GetClockConfig(&clkconfig, &pFLatency);
+
+    /* Get APB1 prescaler */
+    uwAPB1Prescaler = clkconfig.APB1CLKDivider;
+
+    /* Compute timer clock */
+    if (uwAPB1Prescaler == RCC_HCLK_DIV1) {
+        uwTimclock = HAL_RCC_GetPCLK1Freq();
+    } else {
+        uwTimclock = 2 * HAL_RCC_GetPCLK1Freq();
+    }
+
+    timerFrequency = STAT_TIMER_TICK_FREQUENCY_MULTIPLIER * configTICK_RATE_HZ;
+
+    /* Compute the prescaler value to have TIM5 counter clock equal to desired
+     * freqeuncy*/
+    uwPrescalerValue = (uint32_t)((uwTimclock / timerFrequency) - 1U);
+
+    __HAL_TIM_SET_PRESCALER(&STATS_TIM_HANDLE, uwPrescalerValue);
+
+    if (HAL_TIM_Base_Start(&STATS_TIM_HANDLE) != HAL_OK) {
+        uprintf("Failed to start stats timer\n");
+        Error_Handler();
+    }
+}
+
+uint32_t getRunTimeCounterValue() {
+    uint64_t curCounterVal;
+    uint16_t val, elapsed;
+
+    portDISABLE_INTERRUPTS();
+
+    val = __HAL_TIM_GET_COUNTER(&STATS_TIM_HANDLE);
+
+    elapsed = val - lastCounterVal;
+
+    counterVal += elapsed;
+
+    lastCounterVal = val;
+    curCounterVal = counterVal;
+
+    portENABLE_INTERRUPTS();
+
+    return curCounterVal;
+}
+#endif
+
+/*********************************************************************************************/
+BaseType_t cmd_clearScreen(char* writeBuffer, size_t writeBufferLength, const char* commandString) {
+    COMMAND_OUTPUT("\033[2J\033[1;1H");
+    return pdFALSE;
+}
+/*********************************************************************************************/
+BaseType_t cmd_heapUsage(char* writeBuffer, size_t writeBufferLength, const char* commandString) {
+    BaseType_t paramLen;
+    const char* param = FreeRTOS_CLIGetParameter(commandString, 1, &paramLen);
+
+    if (STR_EQ(param, "cur", paramLen)) {
+        COMMAND_OUTPUT("Current free heap (bytes): %d\n", xPortGetFreeHeapSize());
+    } else if (STR_EQ(param, "min", paramLen)) {
+        COMMAND_OUTPUT("Minimum free heap (bytes): %d\n", xPortGetMinimumEverFreeHeapSize());
+    } else {
+        COMMAND_OUTPUT("Unknown parameter\n");
+    }
+
+    return pdFALSE;
+}
+/*********************************************************************************************/
+#define TASK_LIST_NUM_BYTES_PER_TASK 50
+#define MAX_NUM_TASKS 50
+char taskListBuffer[MAX_NUM_TASKS * TASK_LIST_NUM_BYTES_PER_TASK];
+BaseType_t cmd_taskList(char* writeBuffer, size_t writeBufferLength, const char* commandString) {
+    static char* currentStringPointer = NULL;
+
+    if (currentStringPointer == NULL) {
+        // We haven't created any output yet, so gather the stats to output
+        vTaskList(taskListBuffer);
+
+        // Init string pointer
+        currentStringPointer = taskListBuffer;
+
+        // Output the Column headers on the first call
+        COMMAND_OUTPUT("Name\tState\tPriority\tFreeStack (min)\tNum\r\n");
+        return pdTRUE;
+    }
+
+    int charWritten = snprintf(writeBuffer, writeBufferLength, "%s", currentStringPointer);
+
+    if (charWritten < writeBufferLength) {
+        // All the string has been written
+        currentStringPointer = NULL;
+        return pdFALSE;
+    } else {
+        // Only part of the string was written, advance pointer by write buffer
+        // length, subtracting one for the null terminator
+        currentStringPointer += (writeBufferLength - 1);
+        return pdTRUE;
+    }
+}
+/*********************************************************************************************/
+#define STATS_LIST_NUM_BYTES_PER_TASK 50
+char statsListBuffer[MAX_NUM_TASKS * STATS_LIST_NUM_BYTES_PER_TASK];
+BaseType_t cmd_statsList(char* writeBuffer, size_t writeBufferLength, const char* commandString) {
+    static char* currentStringPointer = NULL;
+
+    if (currentStringPointer == NULL) {
+        // We haven't created any output yet, so gather the stats to output
+        vTaskGetRunTimeStats(statsListBuffer);
+
+        // Init string pointer
+        currentStringPointer = statsListBuffer;
+
+        // Output the Column headers on the first call
+        COMMAND_OUTPUT("%-*s\t%s\t%s\r\n\r\n", configMAX_TASK_NAME_LEN, "Name", "Ticks runtime", "CPU Usage");
+        return pdTRUE;
+    }
+
+    int charWritten = snprintf(writeBuffer, writeBufferLength, "%s", currentStringPointer);
+
+    if (charWritten < writeBufferLength) {
+        // All the string has been written
+        currentStringPointer = NULL;
+        return pdFALSE;
+    } else {
+        // Only part of the string was written, advance pointer by write buffer
+        // length, subtracting one for the null terminator
+        currentStringPointer += (writeBufferLength - 1);
+        return pdTRUE;
+    }
+}
+/*********************************************************************************************/
+BaseType_t cmd_reset(char* writeBuffer, size_t writeBufferLength, const char* commandString) {
+    NVIC_SystemReset();
+    return pdFALSE;
+}
+/*********************************************************************************************/
+
+static const CLI_Command_Definition_t xCommandList[] = {
+    {
+        "heap",
+        "heap <min|cur>:\r\n  Outputs the <min|cur> free heap space\r\n",
+        cmd_heapUsage,
+        1 /* Number of parameters */
+    },
+    {
+        "stats",
+        "stats:\r\n  Outputs the freeRTOS run time stats\r\n",
+        cmd_statsList,
+        0 /* Number of parameters */
+    },
+    {
+        "taskList",
+        "taskList:\r\n  Outputs the freeRTOS task list and stats\r\n",
+        cmd_taskList,
+        0 /* Number of parameters */
+    },
+    {
+        "clear",
+        "clear:\r\n  Clear the screen\r\n",
+        cmd_clearScreen,
+        0 /* Number of parameters */
+    },
+    {
+        "reset",
+        "reset:\r\n  Reset the processor\r\n",
+        cmd_reset,
+        0 /* Number of parameters */
+    },
+    {
+        .pcCommand = NULL /* simply used as delimeter for end of array*/
+    }};
+
+HAL_StatusTypeDef cliInit(void) {
+    uartRxQueue = xQueueCreate(UART_RX_QUEUE_LENGTH, sizeof(uartDMA_rxBuffer[0]));
+    if (!uartRxQueue) {
+        return HAL_ERROR;
+    }
+
+    /* Register all commands */
+    for (int i = 0; xCommandList[i].pcCommand != NULL; i++) {
+        if (FreeRTOS_CLIRegisterCommand(&xCommandList[i]) != pdPASS) {
+            return HAL_ERROR;
+        }
+    }
+    return HAL_OK;
 }
