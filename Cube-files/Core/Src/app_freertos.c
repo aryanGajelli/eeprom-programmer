@@ -68,6 +68,13 @@ const osThreadAttr_t cliTaskName_attributes = {
   .priority = (osPriority_t) osPriorityNormal,
   .stack_size = 1024 * 4
 };
+/* Definitions for scopeTaskName */
+osThreadId_t scopeTaskNameHandle;
+const osThreadAttr_t scopeTaskName_attributes = {
+  .name = "scopeTaskName",
+  .priority = (osPriority_t) osPriorityRealtime,
+  .stack_size = 10000 * 4
+};
 
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN FunctionPrototypes */
@@ -77,6 +84,7 @@ const osThreadAttr_t cliTaskName_attributes = {
 void mainTask(void *argument);
 extern void printTask(void *argument);
 extern void cliTask(void *argument);
+extern void scopeTask(void *argument);
 
 void MX_FREERTOS_Init(void); /* (MISRA C 2004 rule 8.1) */
 
@@ -149,6 +157,9 @@ void MX_FREERTOS_Init(void) {
 
   /* creation of cliTaskName */
   cliTaskNameHandle = osThreadNew(cliTask, NULL, &cliTaskName_attributes);
+
+  /* creation of scopeTaskName */
+  scopeTaskNameHandle = osThreadNew(scopeTask, NULL, &scopeTaskName_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */

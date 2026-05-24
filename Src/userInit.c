@@ -1,10 +1,11 @@
 #include "userInit.h"
 
+#include "Si5351.h"
 #include "bsp.h"
+#include "cli.h"
 #include "clockProg.h"
 #include "debug.h"
-#include "cli.h"
-#include "Si5351.h"
+#include "scope.h"
 
 void userInit(void) {
     if (debugInit() != HAL_OK) {
@@ -20,6 +21,10 @@ void userInit(void) {
     }
 
     if (clockProgInit() != HAL_OK) {
+        handleError();
+    }
+
+    if (scopeInit() != HAL_OK) {
         handleError();
     }
 
