@@ -51,14 +51,14 @@ HAL_StatusTypeDef debugInit(void) {
 void printTask(void* pvParameters) {
     char buffer[PRINT_QUEUE_STRING_SIZE] = {0};
 
-    TickType_t xLastWakeTime = xTaskGetTickCount();
+    // TickType_t xLastWakeTime = xTaskGetTickCount();
     while (1) {
         if (xQueueReceive(printQueue, (uint8_t*)buffer, portMAX_DELAY) == pdTRUE) {
             buffer[PRINT_QUEUE_STRING_SIZE - 1] = '\0';
             size_t len = strlen(buffer);
             HAL_UART_Transmit(&DEBUG_UART_HANDLE, (uint8_t*)buffer, len, DEBUG_UART_PRINT_TIMEOUT);
         }
-        vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(10));
+        // vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(1));
     }
 }
 #endif

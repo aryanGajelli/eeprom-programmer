@@ -14,7 +14,7 @@
 
 #ifdef USE_FREERTOS
 #define PRINT_QUEUE_LENGTH 10
-#define PRINT_QUEUE_STRING_SIZE 100
+#define PRINT_QUEUE_STRING_SIZE 128
 #define PRINT_QUEUE_SEND_TIMEOUT_TICKS 10
 
 extern QueueHandle_t printQueue;
@@ -69,7 +69,7 @@ HAL_StatusTypeDef uartStartReceiving(UART_HandleTypeDef* huart);
         snprintf(writeBuffer, writeBufferLength, __VA_ARGS__); \
     } while (0)
 
-
+#define CONCAT(a, b) a##b
 
 void _handleError(char* file, int line);
 #define handleError() _handleError(__FILE__, __LINE__)

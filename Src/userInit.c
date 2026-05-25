@@ -6,6 +6,7 @@
 #include "clockProg.h"
 #include "debug.h"
 #include "scope.h"
+#include "cpuDebug.h"
 
 void userInit(void) {
     if (debugInit() != HAL_OK) {
@@ -25,6 +26,10 @@ void userInit(void) {
     }
 
     if (scopeInit() != HAL_OK) {
+        handleError();
+    }
+
+    if (cpuDebugInit() != HAL_OK) {
         handleError();
     }
 

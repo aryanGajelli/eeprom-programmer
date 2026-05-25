@@ -73,7 +73,7 @@ osThreadId_t scopeTaskNameHandle;
 const osThreadAttr_t scopeTaskName_attributes = {
   .name = "scopeTaskName",
   .priority = (osPriority_t) osPriorityRealtime,
-  .stack_size = 10000 * 4
+  .stack_size = 4096 * 4
 };
 
 /* Private function prototypes -----------------------------------------------*/

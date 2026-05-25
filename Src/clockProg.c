@@ -41,14 +41,19 @@ BaseType_t cmd_clk_init(char* writeBuffer, size_t writeBufferLength, const char*
     // Keep PLL VCO in the 600..900 MHz range (AN619): 25 MHz * 24 = 600 MHz.
     // Use PLLA multiplier 24 to get the lowest VCO allowed (600 MHz),
     // then set multisynth to 900 and R-divider to 128 to produce ~5.2 kHz.
-    if (setupPLLInt(SI5351_PLL_A, 30) != HAL_OK) {
+    if (setupPLLInt(SI5351_PLL_A, 24) != HAL_OK) {
         COMMAND_OUTPUT("Failed to set up PLL A\n");
         return pdFALSE;
     }
 
     // CLK0: 10 MHz = (25MHz + small offset) * 30 / (75 + 1 * 3500)
-    if (setupMultisynth(0, SI5351_PLL_A, 75, 1, 3500) != HAL_OK) {
+    if (setupMultisynth(0, SI5351_PLL_A, 450, 0, 1) != HAL_OK) {
         COMMAND_OUTPUT("Failed to set up multisynth 0\n");
+        return pdFALSE;
+    }
+
+    if (setupRdiv(0, SI5351_R_DIV_128) != HAL_OK) {
+        COMMAND_OUTPUT("Failed to set up R-divider for CLK0\n");
         return pdFALSE;
     }
 
@@ -90,7 +95,7 @@ BaseType_t cmd_set_pllA(char* writeBuffer, size_t writeBufferLength, const char*
     if (setupPLL(SI5351_PLL_A, mul, num, div) != HAL_OK) {
         COMMAND_OUTPUT("Failed to set PLL A configuration to %lu/%lu/%lu\n", mul, num, div);
     }
-   
+
     return pdFALSE;
 }
 /*********************************************************************************************/
@@ -101,8 +106,7 @@ BaseType_t cmd_set_multisynth(char* writeBuffer, size_t writeBufferLength, const
     const char* prm_num = FreeRTOS_CLIGetParameter(commandString, 3, &paramLen);
     const char* prm_div = FreeRTOS_CLIGetParameter(commandString, 4, &paramLen);
 
- 
-    uint32_t ch = atoi(prm_ch);
+    uint32_t ch = atol(prm_ch);
     uint32_t mul = atol(prm_mul);
     uint32_t num = atol(prm_num);
     uint32_t div = atol(prm_div);
@@ -110,7 +114,35 @@ BaseType_t cmd_set_multisynth(char* writeBuffer, size_t writeBufferLength, const
     if (setupMultisynth(ch, SI5351_PLL_A, mul, num, div) != HAL_OK) {
         COMMAND_OUTPUT("Failed to set multisynth %lu configuration to %lu/%lu/%lu\n", ch, mul, num, div);
     }
-   
+
+    return pdFALSE;
+}
+/*********************************************************************************************/
+BaseType_t cmd_start_pwm(char* writeBuffer, size_t writeBufferLength, const char* commandString) {
+    BaseType_t paramLen;
+    const char* prm_freq = FreeRTOS_CLIGetParameter(commandString, 1, &paramLen);
+    uint32_t freq = atol(prm_freq);
+
+    if (freq == 0) {
+        HAL_TIM_PWM_Stop(&PWM_TIM_HANDLE, TIM_CHANNEL_1);
+        return pdFALSE;
+    }
+
+    int32_t ARR = F_CLK / freq - 1;
+    if (ARR < 0) {
+        ARR = 0;
+    }
+
+    __HAL_TIM_SET_AUTORELOAD(&PWM_TIM_HANDLE, (uint32_t)ARR);
+    __HAL_TIM_SET_COMPARE(&PWM_TIM_HANDLE, TIM_CHANNEL_1, (uint32_t)(ARR / 2));
+    // __HAL_TIM_SET_COUNTER(&PWM_TIM_HANDLE, 0);
+    HAL_TIM_GenerateEvent(&PWM_TIM_HANDLE, TIM_EVENTSOURCE_UPDATE);
+    HAL_TIM_PWM_Start(&PWM_TIM_HANDLE, TIM_CHANNEL_1);
+    return pdFALSE;
+}
+/*********************************************************************************************/
+BaseType_t cmd_stop_pwm(char* writeBuffer, size_t writeBufferLength, const char* commandString) {
+    HAL_TIM_PWM_Stop(&PWM_TIM_HANDLE, TIM_CHANNEL_1);
     return pdFALSE;
 }
 /*********************************************************************************************/
@@ -142,15 +174,27 @@ static const CLI_Command_Definition_t xCommandList[] = {
     },
     {
         "set_pllA",
-        "set_pllA:\r\n  PLL A = 25MHz * mul / (num + div)\r\n  PLL A must be in [600MHz, 900MHz]\r\n",
+        "set_pllA <mul> <num> <den>:\r\n  PLL A = 25MHz * (mul * num / den)\r\n  PLL A must be in [600MHz, 900MHz]\r\n",
         cmd_set_pllA,
         3 /* Number of parameters */
     },
     {
         "set_multisynth",
-        "set_multisynth:\r\n  CLK_ch = PLLA * mul / (num + div)\r\n  ch must be in [0, 2]\r\n",
+        "set_multisynth <ch> <mul> <num> <den>:\r\n  CLK_ch = PLLA * (mul * num / den)\r\n  ch must be in [0, 2]\r\n",
         cmd_set_multisynth,
         4 /* Number of parameters */
+    },
+    {
+        "startPwm",
+        "startPwm <freq>:\r\n  Start the PWM output with freq\r\n",
+        cmd_start_pwm,
+        1 /* Number of parameters */
+    },
+    {
+        "stopPwm",
+        "stopPwm:\r\n  Stop the PWM output\r\n",
+        cmd_stop_pwm,
+        0 /* Number of parameters */
     },
     {
         .pcCommand = NULL /* simply used as delimeter for end of array*/
@@ -159,7 +203,7 @@ static const CLI_Command_Definition_t xCommandList[] = {
 HAL_StatusTypeDef timerInit(void) {
     HAL_TIM_Base_Start(&ONE_HZ_TIM_HANDLE);
     HAL_TIM_IC_Start_IT(&CLK_IN_TIM_HANDLE, TIM_CHANNEL_1);
-
+    HAL_TIM_PWM_Start(&PWM_TIM_HANDLE, TIM_CHANNEL_1);
     return HAL_OK;
 }
 

@@ -12,5 +12,6 @@
 #define CLK_IN_TIM_HANDLE htim2
 #define ONE_HZ_TIM_HANDLE htim3
 #define STATS_TIM_HANDLE htim4
+#define PWM_TIM_HANDLE htim5
 #define ADC_HANDLE hadc1
 #endif  // __BSP_H__
