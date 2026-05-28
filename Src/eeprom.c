@@ -278,7 +278,7 @@ void eepromWrite(uint16_t addr, uint8_t data) {
     delayUs(3);
     SET(WE_GPIO_Port, WE_Pin);
     dataPolling(data);
-    delay_cycles(80);
+    delay_cycles(70);
 }
 
 uint8_t eepromRead(uint16_t addr) {
