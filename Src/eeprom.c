@@ -238,14 +238,16 @@ void dataPolling(uint8_t expectedData) {
         dataToInput();
     }
     uint8_t data;
-
+    RESET(OE_GPIO_Port, OE_Pin);
+    delay_cycles(10);
     while ((DWT->CYCCNT - startTime) < US_TO_CYCLES(MAX_POLLING_TIMEOUT_US)) {
         data = (D7_GPIO_Port->IDR & D7_Pin) ? 0x80 : 0x00;
         if (data == (expectedData & 0x80)) {
             break;
         }
     }
-
+    SET(OE_GPIO_Port, OE_Pin);
+    // delay_cycles(10);
     if (prevDataDir == MODE_OUTPUT) {
         dataToOutput();
     }
@@ -278,7 +280,7 @@ void eepromWrite(uint16_t addr, uint8_t data) {
     delayUs(3);
     SET(WE_GPIO_Port, WE_Pin);
     dataPolling(data);
-    delay_cycles(70);
+    delay_cycles(50);
 }
 
 uint8_t eepromRead(uint16_t addr) {
