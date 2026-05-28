@@ -168,17 +168,15 @@ void dataToInput(void) {
 
 void setAddress(uint16_t addr) {
     // Pack the address into per-port bitmasks and update each port with one BSRR write.
-    const uint32_t addr32 = addr;
-
-    const uint32_t gpioCValue = ADDRESS_BIT_TO_PIN(addr32, 0, A0_Pin) | ADDRESS_BIT_TO_PIN(addr32, 1, A1_Pin) |
-                                ADDRESS_BIT_TO_PIN(addr32, 2, A2_Pin) | ADDRESS_BIT_TO_PIN(addr32, 3, A3_Pin) |
-                                ADDRESS_BIT_TO_PIN(addr32, 4, A4_Pin) | ADDRESS_BIT_TO_PIN(addr32, 8, A8_Pin) |
-                                ADDRESS_BIT_TO_PIN(addr32, 15, A15_Pin);
-    const uint32_t gpioAValue = ADDRESS_BIT_TO_PIN(addr32, 5, A5_Pin) | ADDRESS_BIT_TO_PIN(addr32, 6, A6_Pin) |
-                                ADDRESS_BIT_TO_PIN(addr32, 9, A9_Pin) | ADDRESS_BIT_TO_PIN(addr32, 10, A10_Pin) |
-                                ADDRESS_BIT_TO_PIN(addr32, 14, A14_Pin);
-    const uint32_t gpioBValue = ADDRESS_BIT_TO_PIN(addr32, 7, A7_Pin) | ADDRESS_BIT_TO_PIN(addr32, 11, A11_Pin) |
-                                ADDRESS_BIT_TO_PIN(addr32, 12, A12_Pin) | ADDRESS_BIT_TO_PIN(addr32, 13, A13_Pin);
+    const uint32_t gpioCValue = ADDRESS_BIT_TO_PIN(addr, 0, A0_Pin) | ADDRESS_BIT_TO_PIN(addr, 1, A1_Pin) |
+                                ADDRESS_BIT_TO_PIN(addr, 2, A2_Pin) | ADDRESS_BIT_TO_PIN(addr, 3, A3_Pin) |
+                                ADDRESS_BIT_TO_PIN(addr, 4, A4_Pin) | ADDRESS_BIT_TO_PIN(addr, 8, A8_Pin) |
+                                ADDRESS_BIT_TO_PIN(addr, 15, A15_Pin);
+    const uint32_t gpioAValue = ADDRESS_BIT_TO_PIN(addr, 5, A5_Pin) | ADDRESS_BIT_TO_PIN(addr, 6, A6_Pin) |
+                                ADDRESS_BIT_TO_PIN(addr, 9, A9_Pin) | ADDRESS_BIT_TO_PIN(addr, 10, A10_Pin) |
+                                ADDRESS_BIT_TO_PIN(addr, 14, A14_Pin);
+    const uint32_t gpioBValue = ADDRESS_BIT_TO_PIN(addr, 7, A7_Pin) | ADDRESS_BIT_TO_PIN(addr, 11, A11_Pin) |
+                                ADDRESS_BIT_TO_PIN(addr, 12, A12_Pin) | ADDRESS_BIT_TO_PIN(addr, 13, A13_Pin);
 
     GPIOC->BSRR = gpioCValue | ((ADDRESS_GPIOC_MASK & ~gpioCValue) << 16);
     GPIOA->BSRR = gpioAValue | ((ADDRESS_GPIOA_MASK & ~gpioAValue) << 16);
@@ -186,27 +184,35 @@ void setAddress(uint16_t addr) {
 }
 
 uint8_t eepromReadRaw() {
+    uint8_t data = 0;
     uint32_t idrD = D3_GPIO_Port->IDR;
     uint32_t idrB = D4_GPIO_Port->IDR;
     uint32_t idrC = D0_D1_D2_D5_D6_D7_GPIO_Port->IDR;
-    return READ_PIN_TO_DATA(idrC, D0_Pin, 0) | READ_PIN_TO_DATA(idrC, D1_Pin, 1) |
-           READ_PIN_TO_DATA(idrC, D2_Pin, 2) | READ_PIN_TO_DATA(idrD, D3_Pin, 3) |
-           READ_PIN_TO_DATA(idrB, D4_Pin, 4) | READ_PIN_TO_DATA(idrC, D5_Pin, 5) |
-           READ_PIN_TO_DATA(idrC, D6_Pin, 6) | READ_PIN_TO_DATA(idrC, D7_Pin, 7);
+    data |= ((idrC & D0_Pin) ? 0x01 : 0x00) |
+            ((idrC & D1_Pin) ? 0x02 : 0x00) |
+            ((idrC & D2_Pin) ? 0x04 : 0x00) |
+            ((idrD & D3_Pin) ? 0x08 : 0x00) |
+            ((idrB & D4_Pin) ? 0x10 : 0x00) |
+            ((idrC & D5_Pin) ? 0x20 : 0x00) |
+            ((idrC & D6_Pin) ? 0x40 : 0x00) |
+            ((idrC & D7_Pin) ? 0x80 : 0x00);
+
+    return data;
 }
 
 void eepromWriteRaw(uint16_t addr, uint8_t data) {
     setAddress(addr);
-    const uint32_t data32 = data;
-    const uint32_t gpioCValue = DATA_BIT_TO_PIN(data32, 0, D0_Pin) | DATA_BIT_TO_PIN(data32, 1, D1_Pin) |
-                                DATA_BIT_TO_PIN(data32, 2, D2_Pin) | DATA_BIT_TO_PIN(data32, 5, D5_Pin) |
-                                DATA_BIT_TO_PIN(data32, 6, D6_Pin) | DATA_BIT_TO_PIN(data32, 7, D7_Pin);
-    const uint32_t gpioDValue = DATA_BIT_TO_PIN(data32, 3, D3_Pin);
-    const uint32_t gpioBValue = DATA_BIT_TO_PIN(data32, 4, D4_Pin);
+    // __DMB();
+    const uint32_t gpioCValue = DATA_BIT_TO_PIN(data, 0, D0_Pin) | DATA_BIT_TO_PIN(data, 1, D1_Pin) |
+                                DATA_BIT_TO_PIN(data, 2, D2_Pin) | DATA_BIT_TO_PIN(data, 5, D5_Pin) |
+                                DATA_BIT_TO_PIN(data, 6, D6_Pin) | DATA_BIT_TO_PIN(data, 7, D7_Pin);
+    const uint32_t gpioDValue = DATA_BIT_TO_PIN(data, 3, D3_Pin);
+    const uint32_t gpioBValue = DATA_BIT_TO_PIN(data, 4, D4_Pin);
 
     GPIOC->BSRR = gpioCValue | ((DATA_GPIOC_MASK & ~gpioCValue) << 16);
     GPIOD->BSRR = gpioDValue | ((DATA_GPIOD_MASK & ~gpioDValue) << 16);
     GPIOB->BSRR = gpioBValue | ((DATA_GPIOB_MASK & ~gpioBValue) << 16);
+    // __DSB();
 }
 
 /**
@@ -247,27 +253,29 @@ void dataPolling(uint8_t expectedData) {
 
 void eepromWrite(uint16_t addr, uint8_t data) {
     eepromWriteRaw(0x5555, 0xAA);
+    delayUs(1);
+
     RESET(WE_GPIO_Port, WE_Pin);
-    delay_cycles(US_TO_CYCLES(3) + 85);
+    delayUs(3);
     SET(WE_GPIO_Port, WE_Pin);
 
     eepromWriteRaw(0x2AAA, 0x55);
-    delay_cycles(10);
+    delayUs(1);
 
     RESET(WE_GPIO_Port, WE_Pin);
-    delay_cycles(US_TO_CYCLES(3) + 85);
+    delayUs(3);
     SET(WE_GPIO_Port, WE_Pin);
     eepromWriteRaw(0x5555, 0xA0);
-    delay_cycles(10);
+    delayUs(1);
 
     RESET(WE_GPIO_Port, WE_Pin);
-    delay_cycles(US_TO_CYCLES(3) + 85);
+    delayUs(3);
     SET(WE_GPIO_Port, WE_Pin);
     eepromWriteRaw(addr, data);
-    delay_cycles(10);
+    delayUs(1);
 
     RESET(WE_GPIO_Port, WE_Pin);
-    delay_cycles(US_TO_CYCLES(3) + 85);
+    delayUs(3);
     SET(WE_GPIO_Port, WE_Pin);
     dataPolling(data);
 }
@@ -285,6 +293,17 @@ uint8_t eepromRead(uint16_t addr) {
     return data;
 }
 
+void eepromReadSection(uint16_t startAddr, uint16_t length, uint8_t* buffer) {
+    RESET(OE_GPIO_Port, OE_Pin);
+    delay_cycles(10);
+    for (uint16_t i = 0; i < length; i++) {
+        setAddress(startAddr + i);
+        delay_cycles(890);
+        buffer[i] = eepromReadRaw();
+    }
+    SET(OE_GPIO_Port, OE_Pin);
+}
+
 static bool parseUnsignedParameter(const char* commandString, UBaseType_t parameterIndex, uint32_t* valueOut) {
     BaseType_t parameterLength = 0;
     const char* parameter = FreeRTOS_CLIGetParameter(commandString, parameterIndex, &parameterLength);
@@ -297,19 +316,6 @@ static bool parseUnsignedParameter(const char* commandString, UBaseType_t parame
     *valueOut = strtoul(parameter, &endPtr, 0 /* Auto detect base */);
 
     return endPtr != parameter && endPtr == parameter + parameterLength;
-}
-
-void eepromReadSection(uint16_t startAddr, uint16_t length, uint8_t* buffer) {
-    RESET(OE_GPIO_Port, OE_Pin);
-    // Enable output enable
-    // small delay for output to stabilize at 170Mhz, 1 nop takes 1 cycle = 5.88ns, 7 nops = 41.16ns > 35ns which is T_OE
-    delay_cycles(650);
-    for (uint16_t i = 0; i < length; i++) {
-        setAddress(startAddr + i);
-        delay_cycles(1000);
-        buffer[i] = eepromReadRaw();
-    }
-    SET(OE_GPIO_Port, OE_Pin);
 }
 /*********************************************************************************************/
 BaseType_t cmd_eepromEn(char* writeBuffer, size_t writeBufferLength, const char* commandString) {
@@ -357,7 +363,7 @@ BaseType_t cmd_readAddr(char* writeBuffer, size_t writeBufferLength, const char*
     return pdFALSE;
 }
 
-#define MAX_SECTION_BUFFER 512
+#define MAX_SECTION_BUFFER EEPROM_SIZE
 uint8_t sectionBuffer[MAX_SECTION_BUFFER] = {0};
 /*********************************************************************************************/
 BaseType_t cmd_readSection(char* writeBuffer, size_t writeBufferLength, const char* commandString) {
@@ -400,10 +406,10 @@ BaseType_t cmd_readSection(char* writeBuffer, size_t writeBufferLength, const ch
     taskENTER_CRITICAL();
     uint32_t cycles = 0;
     MEASURE_EXPR_CYCLES(
-    eepromReadSection(startAddr, bytesToRead, sectionBuffer),
-    cycles);
+        eepromReadSection(startAddr, bytesToRead, sectionBuffer),
+        cycles);
     taskEXIT_CRITICAL();
-    
+
     uprintf("cycles: %lu = %.3f us\n", cycles, cycles / (F_CLK / 1000000.0f));
     uprintf("\n      00 01 02 03 04 05 06 07  08 09 0a 0b 0c 0d 0e 0f\n");
     for (uint32_t addr = startAddr; addr <= endAddr; addr += BYTES_PER_LINE) {
