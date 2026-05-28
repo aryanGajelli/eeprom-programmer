@@ -253,31 +253,32 @@ void dataPolling(uint8_t expectedData) {
 
 void eepromWrite(uint16_t addr, uint8_t data) {
     eepromWriteRaw(0x5555, 0xAA);
-    delayUs(1);
+    delay_cycles(60);
 
     RESET(WE_GPIO_Port, WE_Pin);
     delayUs(3);
     SET(WE_GPIO_Port, WE_Pin);
 
     eepromWriteRaw(0x2AAA, 0x55);
-    delayUs(1);
+    delay_cycles(60);
 
     RESET(WE_GPIO_Port, WE_Pin);
     delayUs(3);
     SET(WE_GPIO_Port, WE_Pin);
     eepromWriteRaw(0x5555, 0xA0);
-    delayUs(1);
+    delay_cycles(60);
 
     RESET(WE_GPIO_Port, WE_Pin);
     delayUs(3);
     SET(WE_GPIO_Port, WE_Pin);
     eepromWriteRaw(addr, data);
-    delayUs(1);
+    delay_cycles(60);
 
     RESET(WE_GPIO_Port, WE_Pin);
     delayUs(3);
     SET(WE_GPIO_Port, WE_Pin);
     dataPolling(data);
+    delay_cycles(80);
 }
 
 uint8_t eepromRead(uint16_t addr) {
