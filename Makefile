@@ -30,7 +30,7 @@ BUILD_DIR = ../$(BIN_DIR)
 
 BIN_FILE = $(BIN_DIR)/$(BOARD_NAME).elf
 
-EXTRA_LDFLAGS =  -Wl,--no-warn-rwx-segments -u _printf_float -u _scanf_float
+EXTRA_LDFLAGS = -Wl,--print-memory-usage -Wl,--no-warn-rwx-segments -u _printf_float -u _scanf_float
 EXTRA_CFLAGS ?= -Werror
 all:
 	@echo -e "$(BLUE_COLOR)Building: $(RED_COLOR)$(BUILD_TARGET)$(NO_COLOR)"

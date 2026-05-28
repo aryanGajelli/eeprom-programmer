@@ -7,6 +7,7 @@
 #include "debug.h"
 #include "scope.h"
 #include "cpuDebug.h"
+#include "eeprom.h"
 
 void userInit(void) {
     if (debugInit() != HAL_OK) {
@@ -30,6 +31,10 @@ void userInit(void) {
     }
 
     if (cpuDebugInit() != HAL_OK) {
+        handleError();
+    }
+
+    if (eepromInit() != HAL_OK) {
         handleError();
     }
 

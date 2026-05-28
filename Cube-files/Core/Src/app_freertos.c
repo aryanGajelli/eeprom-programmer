@@ -52,7 +52,7 @@ osThreadId_t mainTaskNameHandle;
 const osThreadAttr_t mainTaskName_attributes = {
   .name = "mainTaskName",
   .priority = (osPriority_t) osPriorityNormal,
-  .stack_size = 1024 * 4
+  .stack_size = 512 * 4
 };
 /* Definitions for printTaskName */
 osThreadId_t printTaskNameHandle;
@@ -73,7 +73,7 @@ osThreadId_t scopeTaskNameHandle;
 const osThreadAttr_t scopeTaskName_attributes = {
   .name = "scopeTaskName",
   .priority = (osPriority_t) osPriorityRealtime,
-  .stack_size = 4096 * 4
+  .stack_size = 2048 * 4
 };
 
 /* Private function prototypes -----------------------------------------------*/

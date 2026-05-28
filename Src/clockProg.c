@@ -11,7 +11,7 @@
 #include "task.h"
 #include "tim.h"
 
-#define F_CLK 170000000UL
+
 
 volatile uint32_t Frequency = 0;
 
