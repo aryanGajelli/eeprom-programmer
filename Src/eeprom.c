@@ -59,10 +59,10 @@
                                GPIO_MODER_PIN_MASK(D2_Pin) | GPIO_MODER_PIN_MASK(D6_Pin) | \
                                GPIO_MODER_PIN_MASK(D7_Pin))
 #define DATA_GPIOC_MODER_OUTPUT (GPIO_MODER_PIN_VALUE(D0_Pin, LL_GPIO_MODE_OUTPUT) | \
-                                                  GPIO_MODER_PIN_VALUE(D1_Pin, LL_GPIO_MODE_OUTPUT) | \
-                                                  GPIO_MODER_PIN_VALUE(D2_Pin, LL_GPIO_MODE_OUTPUT) | \
-                                                  GPIO_MODER_PIN_VALUE(D6_Pin, LL_GPIO_MODE_OUTPUT) | \
-                                                  GPIO_MODER_PIN_VALUE(D7_Pin, LL_GPIO_MODE_OUTPUT))
+                                 GPIO_MODER_PIN_VALUE(D1_Pin, LL_GPIO_MODE_OUTPUT) | \
+                                 GPIO_MODER_PIN_VALUE(D2_Pin, LL_GPIO_MODE_OUTPUT) | \
+                                 GPIO_MODER_PIN_VALUE(D6_Pin, LL_GPIO_MODE_OUTPUT) | \
+                                 GPIO_MODER_PIN_VALUE(D7_Pin, LL_GPIO_MODE_OUTPUT))
 #define DATA_GPIOA_MODER_MASK (GPIO_MODER_PIN_MASK(D5_Pin))
 #define DATA_GPIOA_MODER_OUTPUT (GPIO_MODER_PIN_VALUE(D5_Pin, LL_GPIO_MODE_OUTPUT))
 #define DATA_GPIOD_MODER_MASK (GPIO_MODER_PIN_MASK(D3_Pin))
@@ -79,13 +79,13 @@ EEPROMConfig_t eepromConfig = {
     .addrDir = MODE_INPUT,
     .dataDir = MODE_INPUT};
 
+#define repeat(instruction, num)         \
+    __asm volatile(                        \
+        ".rept " #num "\n\t" instruction \
+        "\n\t"                           \
+        ".endr\n\t")
 // delay for N cycles
-static inline void delay_cycles(uint32_t cycles) {
-    uint32_t start = DWT->CYCCNT;
-    while ((DWT->CYCCNT - start) < cycles) {
-        __asm volatile("nop");
-    }
-}
+#define delay_cycles(cycles) repeat("nop", cycles)
 
 void addressToOutput(void) {
     GPIO_InitTypeDef GPIO_InitStruct = {0};
@@ -136,7 +136,7 @@ static inline void dataToInput(void) {
     eepromConfig.dataDir = MODE_INPUT;
 }
 
-void setAddress(uint16_t addr) {
+static inline void setAddress(uint16_t addr) {
     // Pack the address into per-port bitmasks and update each port with one BSRR write.
     const uint32_t gpioCValue = ADDRESS_BIT_TO_PIN(addr, 0, A0_Pin) | ADDRESS_BIT_TO_PIN(addr, 1, A1_Pin) |
                                 ADDRESS_BIT_TO_PIN(addr, 2, A2_Pin) | ADDRESS_BIT_TO_PIN(addr, 3, A3_Pin) |
@@ -153,7 +153,7 @@ void setAddress(uint16_t addr) {
     GPIOB->BSRR = gpioBValue | ((ADDRESS_GPIOB_MASK & ~gpioBValue) << 16);
 }
 
-uint8_t eepromReadRaw() {
+static inline uint8_t eepromReadRaw() {
     uint32_t idrD = D3_GPIO_Port->IDR;
     uint32_t idrB = D4_GPIO_Port->IDR;
     uint32_t idrC = D0_D1_D2_D6_D7_GPIO_Port->IDR;
@@ -168,7 +168,7 @@ uint8_t eepromReadRaw() {
            ((idrC & D7_Pin) ? 0x80 : 0x00);
 }
 
-void eepromWriteRaw(uint16_t addr, uint8_t data) {
+static inline void eepromWriteRaw(uint16_t addr, uint8_t data) {
     setAddress(addr);
     const uint32_t gpioCValue = DATA_BIT_TO_PIN(data, 0, D0_Pin) | DATA_BIT_TO_PIN(data, 1, D1_Pin) |
                                 DATA_BIT_TO_PIN(data, 2, D2_Pin) | DATA_BIT_TO_PIN(data, 6, D6_Pin) |
@@ -202,9 +202,10 @@ void dataPolling(const uint8_t expectedData) {
     uint32_t startTime = DWT->CYCCNT;
     RESET(OE_GPIO_Port, OE_Pin);
     dataToInput();
-    while (
-        (DWT->CYCCNT - startTime) < US_TO_CYCLES(MAX_POLLING_TIMEOUT_US) &&
-        ((D7_GPIO_Port->IDR & D7_Pin) >> PIN_SHIFT(D7_Pin)) != ((expectedData & 0x80) >> 7));
+    const uint32_t expectedBit = (expectedData & 0x80u) ? D7_Pin : 0u;
+    while ((DWT->CYCCNT - startTime) < US_TO_CYCLES(MAX_POLLING_TIMEOUT_US) &&
+           ((D7_GPIO_Port->IDR & D7_Pin) != expectedBit)) {
+    }
 
     SET(OE_GPIO_Port, OE_Pin);
     dataToOutput();
@@ -213,38 +214,22 @@ void dataPolling(const uint8_t expectedData) {
 void eepromWrite(const uint16_t addr, const uint8_t data) {
     eepromWriteRaw(0x5555, 0xAA);
     RESET(WE_GPIO_Port, WE_Pin);
-    __NOP();
-    __NOP();
-    __NOP();
-    __NOP();
-    __NOP();
+    delay_cycles(5);
     SET(WE_GPIO_Port, WE_Pin);
 
     eepromWriteRaw(0x2AAA, 0x55);
     RESET(WE_GPIO_Port, WE_Pin);
-    __NOP();
-    __NOP();
-    __NOP();
-    __NOP();
-    __NOP();
+    delay_cycles(5);
     SET(WE_GPIO_Port, WE_Pin);
 
     eepromWriteRaw(0x5555, 0xA0);
     RESET(WE_GPIO_Port, WE_Pin);
-    __NOP();
-    __NOP();
-    __NOP();
-    __NOP();
-    __NOP();
+    delay_cycles(5);
     SET(WE_GPIO_Port, WE_Pin);
 
     eepromWriteRaw(addr, data);
     RESET(WE_GPIO_Port, WE_Pin);
-    __NOP();
-    __NOP();
-    __NOP();
-    __NOP();
-    __NOP();
+    delay_cycles(5);
     SET(WE_GPIO_Port, WE_Pin);
 
     dataPolling(data);
@@ -256,11 +241,7 @@ uint8_t eepromRead(const uint16_t addr) {
     RESET(OE_GPIO_Port, OE_Pin);
     // Enable output enable
     // small delay for output to stabilize at 170Mhz, 1 nop takes 1 cycle = 5.88ns, 7 nops = 41.16ns > 35ns which is T_OE
-    __NOP();
-    __NOP();
-    __NOP();
-    __NOP();
-    __NOP();
+    delay_cycles(5);
     uint8_t data = eepromReadRaw();
     // Disable output enable
     SET(OE_GPIO_Port, OE_Pin);
@@ -269,10 +250,9 @@ uint8_t eepromRead(const uint16_t addr) {
 
 void eepromReadSection(const uint16_t startAddr, const uint16_t length, uint8_t* buffer) {
     RESET(OE_GPIO_Port, OE_Pin);
-    delay_cycles(6);
     for (uint16_t i = 0; i < length; i++) {
         setAddress(startAddr + i);
-        delay_cycles(14);
+        delay_cycles(5);
         buffer[i] = eepromReadRaw();
     }
     SET(OE_GPIO_Port, OE_Pin);
