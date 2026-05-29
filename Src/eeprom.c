@@ -117,7 +117,7 @@ void addressToOutput(void) {
     eepromConfig.addrDir = MODE_OUTPUT;
 }
 
-void dataToOutput(void) {
+static inline void dataToOutput(void) {
     D0_D1_D2_D6_D7_GPIO_Port->MODER = (D0_D1_D2_D6_D7_GPIO_Port->MODER & ~DATA_GPIOC_MODER_MASK) |
                                       DATA_GPIOC_MODER_OUTPUT;
     D5_GPIO_Port->MODER = (D5_GPIO_Port->MODER & ~DATA_GPIOA_MODER_MASK) | DATA_GPIOA_MODER_OUTPUT;
@@ -127,7 +127,7 @@ void dataToOutput(void) {
     eepromConfig.dataDir = MODE_OUTPUT;
 }
 
-void dataToInput(void) {
+static inline void dataToInput(void) {
     D0_D1_D2_D6_D7_GPIO_Port->MODER &= ~DATA_GPIOC_MODER_MASK;
     D5_GPIO_Port->MODER &= ~DATA_GPIOA_MODER_MASK;
     D3_GPIO_Port->MODER &= ~DATA_GPIOD_MODER_MASK;
@@ -213,22 +213,38 @@ void dataPolling(const uint8_t expectedData) {
 void eepromWrite(const uint16_t addr, const uint8_t data) {
     eepromWriteRaw(0x5555, 0xAA);
     RESET(WE_GPIO_Port, WE_Pin);
-    delay_cycles(7);
+    __NOP();
+    __NOP();
+    __NOP();
+    __NOP();
+    __NOP();
     SET(WE_GPIO_Port, WE_Pin);
 
     eepromWriteRaw(0x2AAA, 0x55);
     RESET(WE_GPIO_Port, WE_Pin);
-    delay_cycles(7);
+    __NOP();
+    __NOP();
+    __NOP();
+    __NOP();
+    __NOP();
     SET(WE_GPIO_Port, WE_Pin);
 
     eepromWriteRaw(0x5555, 0xA0);
     RESET(WE_GPIO_Port, WE_Pin);
-    delay_cycles(7);
+    __NOP();
+    __NOP();
+    __NOP();
+    __NOP();
+    __NOP();
     SET(WE_GPIO_Port, WE_Pin);
 
     eepromWriteRaw(addr, data);
     RESET(WE_GPIO_Port, WE_Pin);
-    delay_cycles(7);
+    __NOP();
+    __NOP();
+    __NOP();
+    __NOP();
+    __NOP();
     SET(WE_GPIO_Port, WE_Pin);
 
     dataPolling(data);
@@ -240,7 +256,11 @@ uint8_t eepromRead(const uint16_t addr) {
     RESET(OE_GPIO_Port, OE_Pin);
     // Enable output enable
     // small delay for output to stabilize at 170Mhz, 1 nop takes 1 cycle = 5.88ns, 7 nops = 41.16ns > 35ns which is T_OE
-    delay_cycles(6);
+    __NOP();
+    __NOP();
+    __NOP();
+    __NOP();
+    __NOP();
     uint8_t data = eepromReadRaw();
     // Disable output enable
     SET(OE_GPIO_Port, OE_Pin);

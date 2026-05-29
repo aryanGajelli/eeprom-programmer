@@ -22,7 +22,7 @@ TARGET ?= eeprom-programmer
 # debug build?
 DEBUG ?= 0
 # optimization
-OPT = -Og
+OPT = -O2
 
 
 #######################################
