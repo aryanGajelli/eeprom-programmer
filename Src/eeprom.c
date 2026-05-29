@@ -10,16 +10,8 @@
 #include "gpio.h"
 #include "main.h"
 #include "stm32g4xx_hal.h"
+#include "stm32g4xx_ll_gpio.h"
 #include "task.h"
-
-typedef struct {
-    uint32_t addrDir;
-    uint32_t dataDir;
-} EEPROMConfig_t;
-
-EEPROMConfig_t eepromConfig = {
-    .addrDir = MODE_INPUT,
-    .dataDir = MODE_INPUT};
 
 // Generic macro to measure any expression (call with args, multiple args, etc.)
 // Usage: uint32_t cycles; MEASURE_EXPR_CYCLES(my_func(a,b), cycles);
@@ -39,6 +31,54 @@ EEPROMConfig_t eepromConfig = {
 
 #define US_TO_CYCLES(us) ((us) * (F_CLK) / 1000000)
 #define delayUs(us) delay_cycles(US_TO_CYCLES(us))
+
+#define PIN_SHIFT(pin) (__builtin_ctz((unsigned)(pin)))
+#define GPIO_MODER_PIN_MASK(pin) (0x3u << (PIN_SHIFT(pin) * 2))
+#define GPIO_MODER_PIN_VALUE(pin, mode) ((mode) << (PIN_SHIFT(pin) * 2))
+
+#define ADDRESS_GPIOC_MASK (A0_Pin | A1_Pin | A2_Pin | A3_Pin | A4_Pin | A8_Pin | A15_Pin)
+#define ADDRESS_GPIOA_MASK (A5_Pin | A6_Pin | A9_Pin | A10_Pin | A14_Pin)
+#define ADDRESS_GPIOB_MASK (A7_Pin | A11_Pin | A12_Pin | A13_Pin)
+#define DATA_GPIOC_MASK (D0_Pin | D1_Pin | D2_Pin | D6_Pin | D7_Pin)
+#define DATA_GPIOA_MASK (D5_Pin)
+#define DATA_GPIOD_MASK (D3_Pin)
+#define DATA_GPIOB_MASK (D4_Pin)
+
+#define SET_RESET_ON_COND(cond, GPIOx, GPIO_Pin) (cond ? SET(GPIOx, GPIO_Pin) : RESET(GPIOx, GPIO_Pin))
+#define ADDRESS_BIT_TO_PIN(addr, bit, pin) ((uint32_t)(0u - (((addr) >> (bit)) & 1u)) & (pin))
+#define DATA_BIT_TO_PIN(data, bit, pin) ((uint32_t)(0u - (((data) >> (bit)) & 1u)) & (pin))
+#define READ_PIN_TO_DATA(idr, pin, dataBit) ((uint8_t)((((idr) & (pin)) >> PIN_SHIFT(pin)) << (dataBit)))
+
+#define MAX_POLLING_TIMEOUT_US 20
+#define MAX_SECTION_BUFFER EEPROM_SIZE
+#define BYTES_PER_LINE 16
+#define MAX_SECTION_DATA 16
+#define INVALID 0x55FF
+
+#define DATA_GPIOC_MODER_MASK (GPIO_MODER_PIN_MASK(D0_Pin) | GPIO_MODER_PIN_MASK(D1_Pin) | \
+                               GPIO_MODER_PIN_MASK(D2_Pin) | GPIO_MODER_PIN_MASK(D6_Pin) | \
+                               GPIO_MODER_PIN_MASK(D7_Pin))
+#define DATA_GPIOC_MODER_OUTPUT (GPIO_MODER_PIN_VALUE(D0_Pin, LL_GPIO_MODE_OUTPUT) | \
+                                                  GPIO_MODER_PIN_VALUE(D1_Pin, LL_GPIO_MODE_OUTPUT) | \
+                                                  GPIO_MODER_PIN_VALUE(D2_Pin, LL_GPIO_MODE_OUTPUT) | \
+                                                  GPIO_MODER_PIN_VALUE(D6_Pin, LL_GPIO_MODE_OUTPUT) | \
+                                                  GPIO_MODER_PIN_VALUE(D7_Pin, LL_GPIO_MODE_OUTPUT))
+#define DATA_GPIOA_MODER_MASK (GPIO_MODER_PIN_MASK(D5_Pin))
+#define DATA_GPIOA_MODER_OUTPUT (GPIO_MODER_PIN_VALUE(D5_Pin, LL_GPIO_MODE_OUTPUT))
+#define DATA_GPIOD_MODER_MASK (GPIO_MODER_PIN_MASK(D3_Pin))
+#define DATA_GPIOD_MODER_OUTPUT (GPIO_MODER_PIN_VALUE(D3_Pin, LL_GPIO_MODE_OUTPUT))
+#define DATA_GPIOB_MODER_MASK (GPIO_MODER_PIN_MASK(D4_Pin))
+#define DATA_GPIOB_MODER_OUTPUT (GPIO_MODER_PIN_VALUE(D4_Pin, LL_GPIO_MODE_OUTPUT))
+
+typedef struct {
+    uint32_t addrDir;
+    uint32_t dataDir;
+} EEPROMConfig_t;
+
+EEPROMConfig_t eepromConfig = {
+    .addrDir = MODE_INPUT,
+    .dataDir = MODE_INPUT};
+
 // delay for N cycles
 static inline void delay_cycles(uint32_t cycles) {
     uint32_t start = DWT->CYCCNT;
@@ -46,7 +86,6 @@ static inline void delay_cycles(uint32_t cycles) {
         __asm volatile("nop");
     }
 }
-
 
 void addressToOutput(void) {
     GPIO_InitTypeDef GPIO_InitStruct = {0};
@@ -79,79 +118,23 @@ void addressToOutput(void) {
 }
 
 void dataToOutput(void) {
-    GPIO_InitTypeDef GPIO_InitStruct = {0};
-
-    GPIO_InitStruct.Pin = D6_Pin | D7_Pin | D0_Pin | D1_Pin | D2_Pin;
-    GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-    GPIO_InitStruct.Pull = GPIO_NOPULL;
-    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
-    HAL_GPIO_Init(D0_D1_D2_D6_D7_GPIO_Port, &GPIO_InitStruct);
-
-    GPIO_InitStruct.Pin = D5_Pin;
-    GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-    GPIO_InitStruct.Pull = GPIO_NOPULL;
-    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
-    HAL_GPIO_Init(D5_GPIO_Port, &GPIO_InitStruct);
-
-    /*Configure GPIO pin : PtPin */
-    GPIO_InitStruct.Pin = D3_Pin;
-    GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-    GPIO_InitStruct.Pull = GPIO_NOPULL;
-    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
-    HAL_GPIO_Init(D3_GPIO_Port, &GPIO_InitStruct);
-
-    /*Configure GPIO pins : PBPin PBPin PBPin PBPin
-                             PBPin */
-    GPIO_InitStruct.Pin = D4_Pin;
-    GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-    GPIO_InitStruct.Pull = GPIO_NOPULL;
-    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
-    HAL_GPIO_Init(D4_GPIO_Port, &GPIO_InitStruct);
+    D0_D1_D2_D6_D7_GPIO_Port->MODER = (D0_D1_D2_D6_D7_GPIO_Port->MODER & ~DATA_GPIOC_MODER_MASK) |
+                                      DATA_GPIOC_MODER_OUTPUT;
+    D5_GPIO_Port->MODER = (D5_GPIO_Port->MODER & ~DATA_GPIOA_MODER_MASK) | DATA_GPIOA_MODER_OUTPUT;
+    D3_GPIO_Port->MODER = (D3_GPIO_Port->MODER & ~DATA_GPIOD_MODER_MASK) | DATA_GPIOD_MODER_OUTPUT;
+    D4_GPIO_Port->MODER = (D4_GPIO_Port->MODER & ~DATA_GPIOB_MODER_MASK) | DATA_GPIOB_MODER_OUTPUT;
 
     eepromConfig.dataDir = MODE_OUTPUT;
 }
 
 void dataToInput(void) {
-    GPIO_InitTypeDef GPIO_InitStruct = {0};
-
-    GPIO_InitStruct.Pin = D6_Pin | D7_Pin | D0_Pin | D1_Pin | D2_Pin;
-    GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-    GPIO_InitStruct.Pull = GPIO_NOPULL;
-    HAL_GPIO_Init(D0_D1_D2_D6_D7_GPIO_Port, &GPIO_InitStruct);
-
-    GPIO_InitStruct.Pin = D5_Pin;
-    GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-    GPIO_InitStruct.Pull = GPIO_NOPULL;
-    HAL_GPIO_Init(D5_GPIO_Port, &GPIO_InitStruct);
-
-    /*Configure GPIO pin : PtPin */
-    GPIO_InitStruct.Pin = D3_Pin;
-    GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-    GPIO_InitStruct.Pull = GPIO_NOPULL;
-    HAL_GPIO_Init(D3_GPIO_Port, &GPIO_InitStruct);
-
-    /*Configure GPIO pins : PBPin PBPin PBPin PBPin
-                             PBPin */
-    GPIO_InitStruct.Pin = D4_Pin;
-    GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-    GPIO_InitStruct.Pull = GPIO_NOPULL;
-    HAL_GPIO_Init(D4_GPIO_Port, &GPIO_InitStruct);
+    D0_D1_D2_D6_D7_GPIO_Port->MODER &= ~DATA_GPIOC_MODER_MASK;
+    D5_GPIO_Port->MODER &= ~DATA_GPIOA_MODER_MASK;
+    D3_GPIO_Port->MODER &= ~DATA_GPIOD_MODER_MASK;
+    D4_GPIO_Port->MODER &= ~DATA_GPIOB_MODER_MASK;
 
     eepromConfig.dataDir = MODE_INPUT;
 }
-
-#define ADDRESS_GPIOC_MASK (A0_Pin | A1_Pin | A2_Pin | A3_Pin | A4_Pin | A8_Pin | A15_Pin)
-#define ADDRESS_GPIOA_MASK (A5_Pin | A6_Pin | A9_Pin | A10_Pin | A14_Pin)
-#define ADDRESS_GPIOB_MASK (A7_Pin | A11_Pin | A12_Pin | A13_Pin)
-#define DATA_GPIOC_MASK (D0_Pin | D1_Pin | D2_Pin | D6_Pin | D7_Pin)
-#define DATA_GPIOA_MASK (D5_Pin)
-#define DATA_GPIOD_MASK (D3_Pin)
-#define DATA_GPIOB_MASK (D4_Pin)
-#define SET_RESET_ON_COND(cond, GPIOx, GPIO_Pin) (cond ? SET(GPIOx, GPIO_Pin) : RESET(GPIOx, GPIO_Pin))
-#define ADDRESS_BIT_TO_PIN(addr, bit, pin) ((uint32_t)(0u - (((addr) >> (bit)) & 1u)) & (pin))
-#define DATA_BIT_TO_PIN(data, bit, pin) ((uint32_t)(0u - (((data) >> (bit)) & 1u)) & (pin))
-#define PIN_SHIFT(pin) (__builtin_ctz((unsigned)(pin)))
-#define READ_PIN_TO_DATA(idr, pin, dataBit) ((uint8_t)((((idr) & (pin)) >> PIN_SHIFT(pin)) << (dataBit)))
 
 void setAddress(uint16_t addr) {
     // Pack the address into per-port bitmasks and update each port with one BSRR write.
@@ -187,7 +170,6 @@ uint8_t eepromReadRaw() {
 
 void eepromWriteRaw(uint16_t addr, uint8_t data) {
     setAddress(addr);
-    // __DMB();
     const uint32_t gpioCValue = DATA_BIT_TO_PIN(data, 0, D0_Pin) | DATA_BIT_TO_PIN(data, 1, D1_Pin) |
                                 DATA_BIT_TO_PIN(data, 2, D2_Pin) | DATA_BIT_TO_PIN(data, 6, D6_Pin) |
                                 DATA_BIT_TO_PIN(data, 7, D7_Pin);
@@ -199,7 +181,6 @@ void eepromWriteRaw(uint16_t addr, uint8_t data) {
     GPIOA->BSRR = gpioAValue | ((DATA_GPIOA_MASK & ~gpioAValue) << 16);
     GPIOD->BSRR = gpioDValue | ((DATA_GPIOD_MASK & ~gpioDValue) << 16);
     GPIOB->BSRR = gpioBValue | ((DATA_GPIOB_MASK & ~gpioBValue) << 16);
-    // __DSB();
 }
 
 /**
@@ -217,7 +198,6 @@ void sectorErase(uint16_t sectorAddr) {
     eepromWriteRaw(sectorAddr & 0xF000, 0x30);
 }
 
-#define MAX_POLLING_TIMEOUT_US 20
 void dataPolling(const uint8_t expectedData) {
     uint32_t startTime = DWT->CYCCNT;
     RESET(OE_GPIO_Port, OE_Pin);
@@ -339,7 +319,6 @@ BaseType_t cmd_readAddr(char* writeBuffer, size_t writeBufferLength, const char*
     return pdFALSE;
 }
 
-#define MAX_SECTION_BUFFER EEPROM_SIZE
 uint8_t sectionBuffer[MAX_SECTION_BUFFER] = {0};
 /*********************************************************************************************/
 BaseType_t cmd_readSection(char* writeBuffer, size_t writeBufferLength, const char* commandString) {
@@ -354,8 +333,7 @@ BaseType_t cmd_readSection(char* writeBuffer, size_t writeBufferLength, const ch
     uint16_t startAddr = (uint16_t)startAddr32;
     uint16_t endAddr = (uint16_t)endAddr32;
     uint16_t bytesToRead = (endAddr - startAddr + 1);
-// make sure bytesToRead is mod 16 for better display formatting
-#define BYTES_PER_LINE 16
+    // make sure bytesToRead is mod 16 for better display formatting
     if (bytesToRead % BYTES_PER_LINE != 0) {
         bytesToRead += (BYTES_PER_LINE - (bytesToRead % BYTES_PER_LINE));
     }
@@ -376,7 +354,13 @@ BaseType_t cmd_readSection(char* writeBuffer, size_t writeBufferLength, const ch
     }
 
     if (eepromConfig.dataDir != MODE_INPUT) {
-        dataToInput();
+        taskENTER_CRITICAL();
+        uint32_t cycles = 0;
+        MEASURE_EXPR_CYCLES(
+            dataToInput(),
+            cycles);
+        taskEXIT_CRITICAL();
+        uprintf("dataToInput cycles: %lu = %.3f us\n", cycles, cycles / (F_CLK / 1000000.0f));
     }
 
     taskENTER_CRITICAL();
@@ -444,7 +428,14 @@ BaseType_t cmd_writeDataToAddr(char* writeBuffer, size_t writeBufferLength, cons
     }
 
     if (eepromConfig.dataDir != MODE_OUTPUT) {
-        dataToOutput();
+        taskENTER_CRITICAL();
+        uint32_t cycles = 0;
+        MEASURE_EXPR_CYCLES(
+            dataToOutput(),
+            cycles);
+        data = eepromRead(addr);
+        taskEXIT_CRITICAL();
+        uprintf("dataToOutput cycles: %lu = %.3f us\n", cycles, cycles / (F_CLK / 1000000.0f));
     }
 
     taskENTER_CRITICAL();
@@ -460,7 +451,6 @@ BaseType_t cmd_writeDataToAddr(char* writeBuffer, size_t writeBufferLength, cons
 }
 /*********************************************************************************************/
 BaseType_t cmd_writeSection(char* writeBuffer, size_t writeBufferLength, const char* commandString) {
-#define MAX_SECTION_DATA 16
     uint32_t addr32 = 0;
     uint32_t data32[MAX_SECTION_DATA] = {0};
 
@@ -502,7 +492,6 @@ BaseType_t cmd_writeSection(char* writeBuffer, size_t writeBufferLength, const c
     if (eepromConfig.dataDir != MODE_INPUT) {
         dataToInput();
     }
-#define INVALID 0x55FF
     uint8_t currentData[MAX_SECTION_DATA] = {0};
     eepromReadSection(addr, dataCount, currentData);
     for (int i = 0; i < dataCount; i++) {
