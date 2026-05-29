@@ -231,29 +231,19 @@ void sectorErase(uint16_t sectorAddr) {
 }
 
 #define MAX_POLLING_TIMEOUT_US 20
-void dataPolling(uint8_t expectedData) {
+void dataPolling(const uint8_t expectedData) {
     uint32_t startTime = DWT->CYCCNT;
-    uint32_t prevDataDir = eepromConfig.dataDir;
-    if (prevDataDir != MODE_INPUT) {
-        dataToInput();
-    }
-    uint8_t data;
     RESET(OE_GPIO_Port, OE_Pin);
-    delay_cycles(10);
-    while ((DWT->CYCCNT - startTime) < US_TO_CYCLES(MAX_POLLING_TIMEOUT_US)) {
-        data = (D7_GPIO_Port->IDR & D7_Pin) ? 0x80 : 0x00;
-        if (data == (expectedData & 0x80)) {
-            break;
-        }
-    }
+    dataToInput(); 
+    while (
+        (DWT->CYCCNT - startTime) < US_TO_CYCLES(MAX_POLLING_TIMEOUT_US) &&
+        ((D7_GPIO_Port->IDR & D7_Pin) >> PIN_SHIFT(D7_Pin)) != ((expectedData & 0x80) >> 7));
+
     SET(OE_GPIO_Port, OE_Pin);
-    // delay_cycles(10);
-    if (prevDataDir == MODE_OUTPUT) {
-        dataToOutput();
-    }
+    dataToOutput();
 }
 
-void eepromWrite(uint16_t addr, uint8_t data) {
+void eepromWrite(const uint16_t addr, const uint8_t data) {
     eepromWriteRaw(0x5555, 0xAA);
     delay_cycles(60);
 
@@ -280,10 +270,9 @@ void eepromWrite(uint16_t addr, uint8_t data) {
     delayUs(3);
     SET(WE_GPIO_Port, WE_Pin);
     dataPolling(data);
-    delay_cycles(50);
 }
 
-uint8_t eepromRead(uint16_t addr) {
+uint8_t eepromRead(const uint16_t addr) {
     // Set the address
     setAddress(addr);
     RESET(OE_GPIO_Port, OE_Pin);
@@ -296,7 +285,7 @@ uint8_t eepromRead(uint16_t addr) {
     return data;
 }
 
-void eepromReadSection(uint16_t startAddr, uint16_t length, uint8_t* buffer) {
+void eepromReadSection(const uint16_t startAddr, const uint16_t length, uint8_t* buffer) {
     RESET(OE_GPIO_Port, OE_Pin);
     delay_cycles(10);
     for (uint16_t i = 0; i < length; i++) {
@@ -556,9 +545,9 @@ BaseType_t cmd_writeSection(char* writeBuffer, size_t writeBufferLength, const c
     uint32_t _mc_start = DWT->CYCCNT;
     addr = (uint16_t)addr32;
     for (int i = 0; i < dataCount; i++) {
-        if (data32[i] == INVALID) {
-            continue;
-        }
+        // if (data32[i] == INVALID) {
+        //     continue;
+        // }
         eepromWrite(addr + i, (uint8_t)data32[i]);
     }
     __DSB();
