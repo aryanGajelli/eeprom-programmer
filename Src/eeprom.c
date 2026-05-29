@@ -30,6 +30,7 @@
     } while (0)
 
 #define US_TO_CYCLES(us) ((us) * (F_CLK) / 1000000)
+#define delayUs(us) delay_cycles(US_TO_CYCLES(us))
 
 #define PIN_SHIFT(pin) (__builtin_ctz((unsigned)(pin)))
 #define GPIO_MODER_PIN_MASK(pin) (0x3u << (PIN_SHIFT(pin) * 2))
@@ -49,7 +50,7 @@
 #define READ_PIN_TO_DATA(idr, pin, dataBit) ((uint8_t)((((idr) & (pin)) >> PIN_SHIFT(pin)) << (dataBit)))
 
 #define MAX_POLLING_TIMEOUT_US 20
-#define MAX_SECTION_BUFFER EEPROM_SIZE
+#define MAX_SECTION_BUFFER 2048
 #define BYTES_PER_LINE 16
 #define MAX_SECTION_DATA 16
 #define INVALID 0x55FF
@@ -69,10 +70,7 @@
 #define DATA_GPIOB_MODER_MASK (GPIO_MODER_PIN_MASK(D4_Pin))
 #define DATA_GPIOB_MODER_OUTPUT (GPIO_MODER_PIN_VALUE(D4_Pin, LL_GPIO_MODE_OUTPUT))
 
-#define PULSE_WRITE_PIN()        \
-    RESET(WE_GPIO_Port, WE_Pin); \
-    delay_cycles(5);             \
-    SET(WE_GPIO_Port, WE_Pin)
+#define PULSE_WRITE_PIN() RESET(WE_GPIO_Port, WE_Pin); delay_cycles(5); SET(WE_GPIO_Port, WE_Pin)
 
 typedef struct {
     uint32_t addrDir;
@@ -90,14 +88,6 @@ EEPROMConfig_t eepromConfig = {
         ".endr\n\t")
 // delay for N cycles
 #define delay_cycles(cycles) repeat("nop", cycles)
-
-void delayUs(uint32_t us) {
-    // Convert microseconds to cycles and delay
-    uint32_t start = DWT->CYCCNT;
-    while ((DWT->CYCCNT - start) < US_TO_CYCLES(us)) {
-        // wait
-    }
-}
 
 void addressToOutput(void) {
     GPIO_InitTypeDef GPIO_InitStruct = {0};
@@ -129,7 +119,7 @@ void addressToOutput(void) {
     eepromConfig.addrDir = MODE_OUTPUT;
 }
 
-static inline void dataToOutput(void) {
+inline void dataToOutput(void) {
     D0_D1_D2_D6_D7_GPIO_Port->MODER = (D0_D1_D2_D6_D7_GPIO_Port->MODER & ~DATA_GPIOC_MODER_MASK) |
                                       DATA_GPIOC_MODER_OUTPUT;
     D5_GPIO_Port->MODER = (D5_GPIO_Port->MODER & ~DATA_GPIOA_MODER_MASK) | DATA_GPIOA_MODER_OUTPUT;
@@ -139,7 +129,7 @@ static inline void dataToOutput(void) {
     eepromConfig.dataDir = MODE_OUTPUT;
 }
 
-static inline void dataToInput(void) {
+inline void dataToInput(void) {
     D0_D1_D2_D6_D7_GPIO_Port->MODER &= ~DATA_GPIOC_MODER_MASK;
     D5_GPIO_Port->MODER &= ~DATA_GPIOA_MODER_MASK;
     D3_GPIO_Port->MODER &= ~DATA_GPIOD_MODER_MASK;
@@ -274,6 +264,56 @@ void eepromWrite(const uint16_t addr, const uint8_t data) {
     dataPolling(data);
 }
 
+HAL_StatusTypeDef eepromProgramBuffer(uint16_t startAddr, uint32_t length, const uint8_t* buffer) {
+    if (buffer == NULL) {
+        return HAL_ERROR;
+    }
+
+    if (length == 0) {
+        return HAL_OK;
+    }
+
+    if (((uint32_t)startAddr + length - 1u) > ((uint32_t)MAX_ADDRESS)) {
+        return HAL_ERROR;
+    }
+
+    if (eepromConfig.addrDir != MODE_OUTPUT) {
+        addressToOutput();
+    }
+
+    if (eepromConfig.dataDir != MODE_OUTPUT) {
+        dataToOutput();
+    }
+
+    uint32_t firstSector = (uint32_t)startAddr & 0xF000u;
+    uint32_t lastSector = ((uint32_t)startAddr + length - 1u) & 0xF000u;
+
+    if (length >= EEPROM_SIZE - SECTOR_SIZE) {
+        uprintf("Erasing entire chip ... ");
+        chipErase();
+    } else {
+        uprintf("Erasing sectors ... 0x%04lx to 0x%04lx ", firstSector, lastSector);
+        for (uint32_t sector = firstSector; sector <= lastSector; sector += SECTOR_SIZE) {
+            sectorErase((uint16_t)sector);
+        }
+    }
+
+    uprintf("Done\nProgramming ... ");
+    taskENTER_CRITICAL();
+    uint32_t cycles = 0;
+    uint32_t _mc_start = DWT->CYCCNT;
+
+    for (uint32_t i = 0; i < length; ++i) {
+        eepromWrite(startAddr + i, buffer[i]);
+    }
+    uint32_t _mc_end = DWT->CYCCNT;
+    cycles = _mc_end - _mc_start;
+    taskEXIT_CRITICAL();
+
+    uprintf("Done (cycles: %lu = %.3f ms)\n", cycles, cycles / (F_CLK / 1000.0f));
+    return HAL_OK;
+}
+
 uint8_t eepromRead(const uint16_t addr) {
     // Set the address
     setAddress(addr);
@@ -331,8 +371,8 @@ BaseType_t cmd_readAddr(char* writeBuffer, size_t writeBufferLength, const char*
         return pdFALSE;
     }
 
-    if (addr > EEPROM_SIZE) {
-        COMMAND_OUTPUT("Address out of range, got %lu !< %u\r\n", addr, EEPROM_SIZE);
+    if (addr > MAX_ADDRESS) {
+        COMMAND_OUTPUT("Address out of range, got %lu !< %u\r\n", addr, MAX_ADDRESS);
         return pdFALSE;
     }
 
@@ -377,8 +417,8 @@ BaseType_t cmd_readSection(char* writeBuffer, size_t writeBufferLength, const ch
         bytesToRead += (BYTES_PER_LINE - (bytesToRead % BYTES_PER_LINE));
     }
 
-    if (startAddr > EEPROM_SIZE || endAddr > EEPROM_SIZE) {
-        COMMAND_OUTPUT("Address out of range, got %u or %u !< %u\r\n", startAddr, endAddr, EEPROM_SIZE);
+    if (startAddr > MAX_ADDRESS || endAddr > MAX_ADDRESS) {
+        COMMAND_OUTPUT("Address out of range, got %u or %u !< %u\r\n", startAddr, endAddr, MAX_ADDRESS);
         return pdFALSE;
     }
 
@@ -440,8 +480,8 @@ BaseType_t cmd_writeDataToAddr(char* writeBuffer, size_t writeBufferLength, cons
     uint16_t addr = (uint16_t)addr32;
     uint8_t data = (uint8_t)data32;
 
-    if (addr > EEPROM_SIZE) {
-        COMMAND_OUTPUT("Address out of range, got %u !< %u\r\n", addr, EEPROM_SIZE);
+    if (addr > MAX_ADDRESS) {
+        COMMAND_OUTPUT("Address out of range, got %u !< %u\r\n", addr, MAX_ADDRESS);
         return pdFALSE;
     }
 
@@ -472,6 +512,7 @@ BaseType_t cmd_writeDataToAddr(char* writeBuffer, size_t writeBufferLength, cons
         MEASURE_EXPR_CYCLES(
             dataToOutput(),
             cycles);
+        data = eepromRead(addr);
         taskEXIT_CRITICAL();
         uprintf("dataToOutput cycles: %lu = %.3f us\n", cycles, cycles / (F_CLK / 1000000.0f));
     }
@@ -481,9 +522,8 @@ BaseType_t cmd_writeDataToAddr(char* writeBuffer, size_t writeBufferLength, cons
     MEASURE_EXPR_CYCLES(
         eepromWrite(addr, data),
         cycles);
-    taskEXIT_CRITICAL();
-    dataToInput();
     data = eepromRead(addr);
+    taskEXIT_CRITICAL();
 
     uprintf("%04x = %02x (cycles: %lu = %.3f us)\n", addr, data, cycles, cycles / (F_CLK / 1000000.0f));
     return pdFALSE;
@@ -518,8 +558,8 @@ BaseType_t cmd_writeSection(char* writeBuffer, size_t writeBufferLength, const c
 
     uint16_t addr = (uint16_t)addr32;
 
-    if (addr + dataCount > EEPROM_SIZE) {
-        COMMAND_OUTPUT("Address out of range, got %u + %u !< %u\r\n", addr, dataCount, EEPROM_SIZE);
+    if ((addr + dataCount - 1u) > MAX_ADDRESS) {
+        COMMAND_OUTPUT("Address out of range, got %u + %u - 1 !< %u\r\n", addr, dataCount, MAX_ADDRESS);
         return pdFALSE;
     }
 
@@ -584,8 +624,8 @@ BaseType_t cmd_sectorErase(char* writeBuffer, size_t writeBufferLength, const ch
 
     uint16_t addr = (uint16_t)addr32;
 
-    if (addr > EEPROM_SIZE) {
-        COMMAND_OUTPUT("Address out of range, got %u !< %u\r\n", addr, EEPROM_SIZE);
+    if (addr > MAX_ADDRESS) {
+        COMMAND_OUTPUT("Address out of range, got %u !< %u\r\n", addr, MAX_ADDRESS);
         return pdFALSE;
     }
 
@@ -696,5 +736,33 @@ HAL_StatusTypeDef eepromInit(void) {
             return HAL_ERROR;
         }
     }
+    return HAL_OK;
+}
+
+HAL_StatusTypeDef eepromWriteSection(uint16_t startAddr, uint32_t length, const uint8_t* buffer) {
+    if (buffer == NULL) {
+        return HAL_ERROR;
+    }
+
+    if (length == 0) {
+        return HAL_OK;
+    }
+
+    if (((uint32_t)startAddr + length - 1u) > ((uint32_t)MAX_ADDRESS)) {
+        return HAL_ERROR;
+    }
+
+    if (eepromConfig.addrDir != MODE_OUTPUT) {
+        addressToOutput();
+    }
+
+    if (eepromConfig.dataDir != MODE_OUTPUT) {
+        dataToOutput();
+    }
+
+    for (uint32_t i = 0; i < length; ++i) {
+        eepromWrite((uint16_t)((uint32_t)startAddr + i), buffer[i]);
+    }
+
     return HAL_OK;
 }
