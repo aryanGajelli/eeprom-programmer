@@ -106,11 +106,17 @@ void addressToOutput(void) {
 void dataToOutput(void) {
     GPIO_InitTypeDef GPIO_InitStruct = {0};
 
-    GPIO_InitStruct.Pin = D5_Pin | D6_Pin | D7_Pin | D0_Pin | D1_Pin | D2_Pin;
+    GPIO_InitStruct.Pin = D6_Pin | D7_Pin | D0_Pin | D1_Pin | D2_Pin;
     GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
     GPIO_InitStruct.Pull = GPIO_NOPULL;
     GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
-    HAL_GPIO_Init(D0_D1_D2_D5_D6_D7_GPIO_Port, &GPIO_InitStruct);
+    HAL_GPIO_Init(D0_D1_D2_D6_D7_GPIO_Port, &GPIO_InitStruct);
+
+    GPIO_InitStruct.Pin = D5_Pin;
+    GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+    GPIO_InitStruct.Pull = GPIO_NOPULL;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
+    HAL_GPIO_Init(D5_GPIO_Port, &GPIO_InitStruct);
 
     /*Configure GPIO pin : PtPin */
     GPIO_InitStruct.Pin = D3_Pin;
@@ -133,10 +139,15 @@ void dataToOutput(void) {
 void dataToInput(void) {
     GPIO_InitTypeDef GPIO_InitStruct = {0};
 
-    GPIO_InitStruct.Pin = D5_Pin | D6_Pin | D7_Pin | D0_Pin | D1_Pin | D2_Pin;
+    GPIO_InitStruct.Pin = D6_Pin | D7_Pin | D0_Pin | D1_Pin | D2_Pin;
     GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
     GPIO_InitStruct.Pull = GPIO_NOPULL;
-    HAL_GPIO_Init(D0_D1_D2_D5_D6_D7_GPIO_Port, &GPIO_InitStruct);
+    HAL_GPIO_Init(D0_D1_D2_D6_D7_GPIO_Port, &GPIO_InitStruct);
+
+    GPIO_InitStruct.Pin = D5_Pin;
+    GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+    GPIO_InitStruct.Pull = GPIO_NOPULL;
+    HAL_GPIO_Init(D5_GPIO_Port, &GPIO_InitStruct);
 
     /*Configure GPIO pin : PtPin */
     GPIO_InitStruct.Pin = D3_Pin;
@@ -157,7 +168,8 @@ void dataToInput(void) {
 #define ADDRESS_GPIOC_MASK (A0_Pin | A1_Pin | A2_Pin | A3_Pin | A4_Pin | A8_Pin | A15_Pin)
 #define ADDRESS_GPIOA_MASK (A5_Pin | A6_Pin | A9_Pin | A10_Pin | A14_Pin)
 #define ADDRESS_GPIOB_MASK (A7_Pin | A11_Pin | A12_Pin | A13_Pin)
-#define DATA_GPIOC_MASK (D0_Pin | D1_Pin | D2_Pin | D5_Pin | D6_Pin | D7_Pin)
+#define DATA_GPIOC_MASK (D0_Pin | D1_Pin | D2_Pin | D6_Pin | D7_Pin)
+#define DATA_GPIOA_MASK (D5_Pin)
 #define DATA_GPIOD_MASK (D3_Pin)
 #define DATA_GPIOB_MASK (D4_Pin)
 #define SET_RESET_ON_COND(cond, GPIOx, GPIO_Pin) (cond ? SET(GPIOx, GPIO_Pin) : RESET(GPIOx, GPIO_Pin))
@@ -184,32 +196,32 @@ void setAddress(uint16_t addr) {
 }
 
 uint8_t eepromReadRaw() {
-    uint8_t data = 0;
     uint32_t idrD = D3_GPIO_Port->IDR;
     uint32_t idrB = D4_GPIO_Port->IDR;
-    uint32_t idrC = D0_D1_D2_D5_D6_D7_GPIO_Port->IDR;
-    data |= ((idrC & D0_Pin) ? 0x01 : 0x00) |
+        uint32_t idrC = D0_D1_D2_D6_D7_GPIO_Port->IDR;
+        uint32_t idrA = D5_GPIO_Port->IDR;
+    return ((idrC & D0_Pin) ? 0x01 : 0x00) |
             ((idrC & D1_Pin) ? 0x02 : 0x00) |
             ((idrC & D2_Pin) ? 0x04 : 0x00) |
             ((idrD & D3_Pin) ? 0x08 : 0x00) |
             ((idrB & D4_Pin) ? 0x10 : 0x00) |
-            ((idrC & D5_Pin) ? 0x20 : 0x00) |
+            ((idrA & D5_Pin) ? 0x20 : 0x00) |
             ((idrC & D6_Pin) ? 0x40 : 0x00) |
             ((idrC & D7_Pin) ? 0x80 : 0x00);
-
-    return data;
 }
 
 void eepromWriteRaw(uint16_t addr, uint8_t data) {
     setAddress(addr);
     // __DMB();
     const uint32_t gpioCValue = DATA_BIT_TO_PIN(data, 0, D0_Pin) | DATA_BIT_TO_PIN(data, 1, D1_Pin) |
-                                DATA_BIT_TO_PIN(data, 2, D2_Pin) | DATA_BIT_TO_PIN(data, 5, D5_Pin) |
-                                DATA_BIT_TO_PIN(data, 6, D6_Pin) | DATA_BIT_TO_PIN(data, 7, D7_Pin);
+                                DATA_BIT_TO_PIN(data, 2, D2_Pin) | DATA_BIT_TO_PIN(data, 6, D6_Pin) |
+                                DATA_BIT_TO_PIN(data, 7, D7_Pin);
+    const uint32_t gpioAValue = DATA_BIT_TO_PIN(data, 5, D5_Pin);
     const uint32_t gpioDValue = DATA_BIT_TO_PIN(data, 3, D3_Pin);
     const uint32_t gpioBValue = DATA_BIT_TO_PIN(data, 4, D4_Pin);
 
     GPIOC->BSRR = gpioCValue | ((DATA_GPIOC_MASK & ~gpioCValue) << 16);
+    GPIOA->BSRR = gpioAValue | ((DATA_GPIOA_MASK & ~gpioAValue) << 16);
     GPIOD->BSRR = gpioDValue | ((DATA_GPIOD_MASK & ~gpioDValue) << 16);
     GPIOB->BSRR = gpioBValue | ((DATA_GPIOB_MASK & ~gpioBValue) << 16);
     // __DSB();
@@ -234,7 +246,7 @@ void sectorErase(uint16_t sectorAddr) {
 void dataPolling(const uint8_t expectedData) {
     uint32_t startTime = DWT->CYCCNT;
     RESET(OE_GPIO_Port, OE_Pin);
-    dataToInput(); 
+    dataToInput();
     while (
         (DWT->CYCCNT - startTime) < US_TO_CYCLES(MAX_POLLING_TIMEOUT_US) &&
         ((D7_GPIO_Port->IDR & D7_Pin) >> PIN_SHIFT(D7_Pin)) != ((expectedData & 0x80) >> 7));
@@ -278,7 +290,7 @@ uint8_t eepromRead(const uint16_t addr) {
     RESET(OE_GPIO_Port, OE_Pin);
     // Enable output enable
     // small delay for output to stabilize at 170Mhz, 1 nop takes 1 cycle = 5.88ns, 7 nops = 41.16ns > 35ns which is T_OE
-    delay_cycles(650);
+    delay_cycles(10);
     uint8_t data = eepromReadRaw();
     // Disable output enable
     SET(OE_GPIO_Port, OE_Pin);
@@ -287,10 +299,10 @@ uint8_t eepromRead(const uint16_t addr) {
 
 void eepromReadSection(const uint16_t startAddr, const uint16_t length, uint8_t* buffer) {
     RESET(OE_GPIO_Port, OE_Pin);
-    delay_cycles(10);
+    delay_cycles(170);
     for (uint16_t i = 0; i < length; i++) {
         setAddress(startAddr + i);
-        delay_cycles(890);
+        delay_cycles(10);
         buffer[i] = eepromReadRaw();
     }
     SET(OE_GPIO_Port, OE_Pin);
@@ -346,11 +358,15 @@ BaseType_t cmd_readAddr(char* writeBuffer, size_t writeBufferLength, const char*
         dataToInput();
     }
 
+    uint8_t data = 0;
     taskENTER_CRITICAL();
-    uint8_t data = eepromRead(addr);
+    uint32_t cycles = 0;
+    MEASURE_EXPR_CYCLES(
+        eepromReadSection(addr, 1, &data),
+        cycles);
     taskEXIT_CRITICAL();
 
-    uprintf("%04lx = %02x\n", addr, data);
+    uprintf("%04lx = %02x  (cycles: %lu = %.3f us)\n", addr, data, cycles, cycles / (F_CLK / 1000000.0f));
 
     return pdFALSE;
 }
