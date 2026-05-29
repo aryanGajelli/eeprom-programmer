@@ -1,5 +1,7 @@
 #include "cli.h"
 
+#include <stdbool.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "FreeRTOS.h"
@@ -7,6 +9,7 @@
 #include "assert.h"
 #include "bsp.h"
 #include "debug.h"
+#include "eeprom.h"
 #include "stm32g4xx_hal.h"
 #include "task.h"
 
@@ -31,6 +34,97 @@ typedef struct {
 } UartRxChunk_t;
 
 static uint16_t uartLastRxSize = 0;
+
+#define BULK_IMAGE_SIZE (32u * 1024u)
+
+typedef enum {
+    BULK_STATE_IDLE = 0,
+    BULK_STATE_RECEIVING,
+    BULK_STATE_READY_TO_PROGRAM,
+    BULK_STATE_ERROR,
+} BulkState_t;
+
+typedef struct {
+    volatile BulkState_t state;
+    uint16_t targetAddr;
+    uint32_t expectedLength;
+    uint32_t receivedLength;
+    uint32_t expectedCrc32;
+    uint32_t runningCrc32;
+} BulkTransfer_t;
+
+static uint8_t bulkImage[BULK_IMAGE_SIZE];
+static volatile BulkTransfer_t bulkTransfer = {
+    .state = BULK_STATE_IDLE,
+};
+
+static bool parseUnsignedParameter(const char* commandString, UBaseType_t parameterIndex, uint32_t* valueOut) {
+    BaseType_t parameterLength = 0;
+    const char* parameter = FreeRTOS_CLIGetParameter(commandString, parameterIndex, &parameterLength);
+    char* endPtr = NULL;
+
+    if (parameter == NULL) {
+        return false;
+    }
+
+    *valueOut = strtoul(parameter, &endPtr, 0 /* Auto detect base */);
+
+    return endPtr != parameter && endPtr == parameter + parameterLength;
+}
+
+static uint32_t bulkCrc32Update(uint32_t crc, uint8_t data) {
+    crc ^= (uint32_t)data;
+    for (int i = 0; i < 8; ++i) {
+        if ((crc & 1u) != 0u) {
+            crc = (crc >> 1) ^ 0xEDB88320u;
+        } else {
+            crc >>= 1;
+        }
+    }
+    return crc;
+}
+
+static void bulkTransferReset(void) {
+    bulkTransfer.state = BULK_STATE_IDLE;
+    bulkTransfer.targetAddr = 0;
+    bulkTransfer.expectedLength = 0;
+    bulkTransfer.receivedLength = 0;
+    bulkTransfer.expectedCrc32 = 0;
+    bulkTransfer.runningCrc32 = 0xFFFFFFFFu;
+}
+
+static void bulkTransferBegin(uint16_t targetAddr, uint32_t expectedLength, uint32_t expectedCrc32) {
+    bulkTransferReset();
+    bulkTransfer.targetAddr = targetAddr;
+    bulkTransfer.expectedLength = expectedLength;
+    bulkTransfer.expectedCrc32 = expectedCrc32;
+    bulkTransfer.runningCrc32 = 0xFFFFFFFFu;
+    bulkTransfer.state = BULK_STATE_RECEIVING;
+}
+
+static void bulkTransferConsumeByte(uint8_t byte) {
+    if (bulkTransfer.state != BULK_STATE_RECEIVING) {
+        return;
+    }
+
+    if (bulkTransfer.receivedLength >= bulkTransfer.expectedLength) {
+        bulkTransfer.state = BULK_STATE_ERROR;
+        return;
+    }
+
+    bulkImage[bulkTransfer.receivedLength] = byte;
+    bulkTransfer.receivedLength++;
+    bulkTransfer.runningCrc32 = bulkCrc32Update(bulkTransfer.runningCrc32, byte);
+
+    if (bulkTransfer.receivedLength == bulkTransfer.expectedLength) {
+        uint32_t imageCrc = bulkTransfer.runningCrc32 ^ 0xFFFFFFFFu;
+        if (imageCrc == bulkTransfer.expectedCrc32) {
+            bulkTransfer.state = BULK_STATE_READY_TO_PROGRAM;
+        } else {
+            bulkTransfer.state = BULK_STATE_ERROR;
+        }
+    }
+}
 
 HAL_StatusTypeDef uartStartReceiving(UART_HandleTypeDef* huart) {
     if (huart == &DEBUG_UART_HANDLE) {
@@ -81,6 +175,13 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef* huart, uint16_t Size) {
         return;
     }
 
+    if (bulkTransfer.state == BULK_STATE_RECEIVING) {
+        for (uint16_t i = 0; i < rxChunk.length; ++i) {
+            bulkTransferConsumeByte(rxChunk.data[i]);
+        }
+        return;
+    }
+
     xQueueSendFromISR(uartRxQueue, &rxChunk, &xHigherPriorityTaskWoken);
 
     if (xHigherPriorityTaskWoken) {
@@ -104,6 +205,28 @@ void cliTask(void* pvParameters) {
     uprintf("CLI Started. Enter command, or help for more info\n");
     uprintf("%s", PS1);
     while (1) {
+        if (bulkTransfer.state == BULK_STATE_READY_TO_PROGRAM) {
+            uint16_t targetAddr = bulkTransfer.targetAddr;
+            uint32_t expectedLength = bulkTransfer.expectedLength;
+
+            uprintf("Bulk RX complete, programming %lu bytes at 0x%04x\r\n", expectedLength, targetAddr);
+            if (eepromProgramBuffer(targetAddr, expectedLength, bulkImage) != HAL_OK) {
+                uprintf("Bulk programming failed\r\n");
+            } else {
+                uprintf("Bulk programming complete\r\n");
+            }
+            bulkTransferReset();
+            uprintf("%s", PS1);
+            continue;
+        }
+
+        if (bulkTransfer.state == BULK_STATE_ERROR) {
+            uprintf("Bulk transfer failed (overflow or crc mismatch)\r\n");
+            bulkTransferReset();
+            uprintf("%s", PS1);
+            continue;
+        }
+
         UartRxChunk_t rxChunk;
         if (xQueueReceive(uartRxQueue, &rxChunk, portMAX_DELAY) != pdTRUE) {
             uprintf("Error Receiving from UART Rx Queue\n");
@@ -333,6 +456,43 @@ BaseType_t cmd_reset(char* writeBuffer, size_t writeBufferLength, const char* co
     return pdFALSE;
 }
 /*********************************************************************************************/
+BaseType_t cmd_bulkLoad(char* writeBuffer, size_t writeBufferLength, const char* commandString) {
+    uint32_t targetAddr32 = 0;
+    uint32_t length32 = 0;
+    uint32_t crc32 = 0;
+
+    if (bulkTransfer.state != BULK_STATE_IDLE) {
+        COMMAND_OUTPUT("Bulk transfer already active\r\n");
+        return pdFALSE;
+    }
+
+    if (!parseUnsignedParameter(commandString, 1, &targetAddr32) ||
+        !parseUnsignedParameter(commandString, 2, &length32) ||
+        !parseUnsignedParameter(commandString, 3, &crc32)) {
+        COMMAND_OUTPUT("Usage: bulkLoad <flashAddr> <length> <crc32>\r\n");
+        return pdFALSE;
+    }
+
+    if (targetAddr32 > UINT16_MAX || length32 == 0 || length32 > BULK_IMAGE_SIZE) {
+        COMMAND_OUTPUT("Range error\r\n");
+        return pdFALSE;
+    }
+
+    if ((targetAddr32 & 0x0FFFu) != 0u || (length32 & 0x0FFFu) != 0u) {
+        COMMAND_OUTPUT("Address and length must be 4 kB aligned\r\n");
+        return pdFALSE;
+    }
+
+    if (((uint32_t)targetAddr32 + length32) > ((uint32_t)EEPROM_SIZE + 1u)) {
+        COMMAND_OUTPUT("Flash range out of bounds\r\n");
+        return pdFALSE;
+    }
+
+    bulkTransferBegin((uint16_t)targetAddr32, length32, crc32);
+    COMMAND_OUTPUT("READY: send %lu raw bytes now\r\n", length32);
+    return pdFALSE;
+}
+/*********************************************************************************************/
 
 static const CLI_Command_Definition_t xCommandList[] = {
     {
@@ -364,6 +524,12 @@ static const CLI_Command_Definition_t xCommandList[] = {
         "reset:\r\n  Reset the processor\r\n",
         cmd_reset,
         0 /* Number of parameters */
+    },
+    {
+        "bulkLoad",
+        "bulkLoad <flashAddr> <length> <crc32>:\r\n  Receive raw bytes into RAM, verify CRC32, then program EEPROM\r\n",
+        cmd_bulkLoad,
+        3 /* Number of parameters */
     },
     {
         .pcCommand = NULL /* simply used as delimeter for end of array*/
