@@ -74,10 +74,14 @@ void Error_Handler(void);
 #define A1_GPIO_Port GPIOC
 #define RW_Pin GPIO_PIN_3
 #define RW_GPIO_Port GPIOC
+#define WE_Pin GPIO_PIN_4
+#define WE_GPIO_Port GPIOA
 #define LD2_Pin GPIO_PIN_5
 #define LD2_GPIO_Port GPIOA
 #define A15_Pin GPIO_PIN_4
 #define A15_GPIO_Port GPIOC
+#define OE_Pin GPIO_PIN_0
+#define OE_GPIO_Port GPIOB
 #define A4_Pin GPIO_PIN_6
 #define A4_GPIO_Port GPIOC
 #define A8_Pin GPIO_PIN_7

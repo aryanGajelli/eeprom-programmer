@@ -13,13 +13,11 @@
 #include "task.h"
 
 typedef struct {
-    uint32_t ctrlDir;
     uint32_t addrDir;
     uint32_t dataDir;
 } EEPROMConfig_t;
 
 EEPROMConfig_t eepromConfig = {
-    .ctrlDir = MODE_INPUT,
     .addrDir = MODE_INPUT,
     .dataDir = MODE_INPUT};
 
@@ -49,29 +47,6 @@ static inline void delay_cycles(uint32_t cycles) {
     }
 }
 
-void controlToOutput(void) {
-    // disable the interrupt that was set on the clk pin of the cpu
-    HAL_NVIC_DisableIRQ(EXTI15_10_IRQn);
-
-    GPIO_InitTypeDef GPIO_InitStruct = {0};
-
-    HAL_GPIO_WritePin(OE_GPIO_Port, OE_Pin, GPIO_PIN_SET);
-    HAL_GPIO_WritePin(WE_GPIO_Port, WE_Pin, GPIO_PIN_SET);
-
-    GPIO_InitStruct.Pin = OE_Pin;
-    GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-    GPIO_InitStruct.Pull = GPIO_NOPULL;
-    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
-    HAL_GPIO_Init(OE_GPIO_Port, &GPIO_InitStruct);
-
-    GPIO_InitStruct.Pin = WE_Pin;
-    GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-    GPIO_InitStruct.Pull = GPIO_NOPULL;
-    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
-    HAL_GPIO_Init(WE_GPIO_Port, &GPIO_InitStruct);
-
-    eepromConfig.ctrlDir = MODE_OUTPUT;
-}
 
 void addressToOutput(void) {
     GPIO_InitTypeDef GPIO_InitStruct = {0};
@@ -258,24 +233,24 @@ void dataPolling(const uint8_t expectedData) {
 void eepromWrite(const uint16_t addr, const uint8_t data) {
     eepromWriteRaw(0x5555, 0xAA);
     RESET(WE_GPIO_Port, WE_Pin);
-    delay_cycles(60);
+    delay_cycles(7);
     SET(WE_GPIO_Port, WE_Pin);
 
     eepromWriteRaw(0x2AAA, 0x55);
     RESET(WE_GPIO_Port, WE_Pin);
-    delay_cycles(60);
+    delay_cycles(7);
     SET(WE_GPIO_Port, WE_Pin);
 
     eepromWriteRaw(0x5555, 0xA0);
     RESET(WE_GPIO_Port, WE_Pin);
-    delay_cycles(60);
+    delay_cycles(7);
     SET(WE_GPIO_Port, WE_Pin);
 
     eepromWriteRaw(addr, data);
     RESET(WE_GPIO_Port, WE_Pin);
-    delay_cycles(60);
+    delay_cycles(7);
     SET(WE_GPIO_Port, WE_Pin);
-    
+
     dataPolling(data);
 }
 
@@ -285,7 +260,7 @@ uint8_t eepromRead(const uint16_t addr) {
     RESET(OE_GPIO_Port, OE_Pin);
     // Enable output enable
     // small delay for output to stabilize at 170Mhz, 1 nop takes 1 cycle = 5.88ns, 7 nops = 41.16ns > 35ns which is T_OE
-    delay_cycles(170);
+    delay_cycles(6);
     uint8_t data = eepromReadRaw();
     // Disable output enable
     SET(OE_GPIO_Port, OE_Pin);
@@ -294,10 +269,10 @@ uint8_t eepromRead(const uint16_t addr) {
 
 void eepromReadSection(const uint16_t startAddr, const uint16_t length, uint8_t* buffer) {
     RESET(OE_GPIO_Port, OE_Pin);
-    delay_cycles(170);
+    delay_cycles(6);
     for (uint16_t i = 0; i < length; i++) {
         setAddress(startAddr + i);
-        delay_cycles(13);
+        delay_cycles(14);
         buffer[i] = eepromReadRaw();
     }
     SET(OE_GPIO_Port, OE_Pin);
@@ -318,14 +293,12 @@ static bool parseUnsignedParameter(const char* commandString, UBaseType_t parame
 }
 /*********************************************************************************************/
 BaseType_t cmd_eepromEn(char* writeBuffer, size_t writeBufferLength, const char* commandString) {
-    controlToOutput();
     addressToOutput();
     return pdFALSE;
 }
 /*********************************************************************************************/
 BaseType_t cmd_eepromDis(char* writeBuffer, size_t writeBufferLength, const char* commandString) {
     MX_GPIO_Init();
-    eepromConfig.ctrlDir = MODE_INPUT;
     eepromConfig.addrDir = MODE_INPUT;
     eepromConfig.dataDir = MODE_INPUT;
     return pdFALSE;
@@ -344,7 +317,7 @@ BaseType_t cmd_readAddr(char* writeBuffer, size_t writeBufferLength, const char*
         return pdFALSE;
     }
 
-    if (eepromConfig.addrDir != MODE_OUTPUT || eepromConfig.ctrlDir != MODE_OUTPUT) {
+    if (eepromConfig.addrDir != MODE_OUTPUT) {
         COMMAND_OUTPUT("EEPROM mode not initialized, call eepromEn first\r\n");
         return pdFALSE;
     }
@@ -397,7 +370,7 @@ BaseType_t cmd_readSection(char* writeBuffer, size_t writeBufferLength, const ch
         return pdFALSE;
     }
 
-    if (eepromConfig.addrDir != MODE_OUTPUT || eepromConfig.ctrlDir != MODE_OUTPUT) {
+    if (eepromConfig.addrDir != MODE_OUTPUT) {
         COMMAND_OUTPUT("EEPROM mode not initialized, call eepromEn first\r\n");
         return pdFALSE;
     }
@@ -449,7 +422,7 @@ BaseType_t cmd_writeDataToAddr(char* writeBuffer, size_t writeBufferLength, cons
         return pdFALSE;
     }
 
-    if (eepromConfig.addrDir != MODE_OUTPUT || eepromConfig.ctrlDir != MODE_OUTPUT) {
+    if (eepromConfig.addrDir != MODE_OUTPUT) {
         COMMAND_OUTPUT("EEPROM mode not initialized, call eepromEn first\r\n");
         return pdFALSE;
     }
@@ -521,7 +494,7 @@ BaseType_t cmd_writeSection(char* writeBuffer, size_t writeBufferLength, const c
         return pdFALSE;
     }
 
-    if (eepromConfig.addrDir != MODE_OUTPUT || eepromConfig.ctrlDir != MODE_OUTPUT) {
+    if (eepromConfig.addrDir != MODE_OUTPUT) {
         COMMAND_OUTPUT("EEPROM mode not initialized, call eepromEn first\r\n");
         return pdFALSE;
     }
