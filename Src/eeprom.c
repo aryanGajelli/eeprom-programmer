@@ -198,16 +198,16 @@ void setAddress(uint16_t addr) {
 uint8_t eepromReadRaw() {
     uint32_t idrD = D3_GPIO_Port->IDR;
     uint32_t idrB = D4_GPIO_Port->IDR;
-        uint32_t idrC = D0_D1_D2_D6_D7_GPIO_Port->IDR;
-        uint32_t idrA = D5_GPIO_Port->IDR;
+    uint32_t idrC = D0_D1_D2_D6_D7_GPIO_Port->IDR;
+    uint32_t idrA = D5_GPIO_Port->IDR;
     return ((idrC & D0_Pin) ? 0x01 : 0x00) |
-            ((idrC & D1_Pin) ? 0x02 : 0x00) |
-            ((idrC & D2_Pin) ? 0x04 : 0x00) |
-            ((idrD & D3_Pin) ? 0x08 : 0x00) |
-            ((idrB & D4_Pin) ? 0x10 : 0x00) |
-            ((idrA & D5_Pin) ? 0x20 : 0x00) |
-            ((idrC & D6_Pin) ? 0x40 : 0x00) |
-            ((idrC & D7_Pin) ? 0x80 : 0x00);
+           ((idrC & D1_Pin) ? 0x02 : 0x00) |
+           ((idrC & D2_Pin) ? 0x04 : 0x00) |
+           ((idrD & D3_Pin) ? 0x08 : 0x00) |
+           ((idrB & D4_Pin) ? 0x10 : 0x00) |
+           ((idrA & D5_Pin) ? 0x20 : 0x00) |
+           ((idrC & D6_Pin) ? 0x40 : 0x00) |
+           ((idrC & D7_Pin) ? 0x80 : 0x00);
 }
 
 void eepromWriteRaw(uint16_t addr, uint8_t data) {
@@ -257,30 +257,25 @@ void dataPolling(const uint8_t expectedData) {
 
 void eepromWrite(const uint16_t addr, const uint8_t data) {
     eepromWriteRaw(0x5555, 0xAA);
-    delay_cycles(60);
-
     RESET(WE_GPIO_Port, WE_Pin);
-    delayUs(3);
+    delay_cycles(60);
     SET(WE_GPIO_Port, WE_Pin);
 
     eepromWriteRaw(0x2AAA, 0x55);
-    delay_cycles(60);
-
     RESET(WE_GPIO_Port, WE_Pin);
-    delayUs(3);
+    delay_cycles(60);
     SET(WE_GPIO_Port, WE_Pin);
+
     eepromWriteRaw(0x5555, 0xA0);
-    delay_cycles(60);
-
     RESET(WE_GPIO_Port, WE_Pin);
-    delayUs(3);
+    delay_cycles(60);
     SET(WE_GPIO_Port, WE_Pin);
+
     eepromWriteRaw(addr, data);
-    delay_cycles(60);
-
     RESET(WE_GPIO_Port, WE_Pin);
-    delayUs(3);
+    delay_cycles(60);
     SET(WE_GPIO_Port, WE_Pin);
+    
     dataPolling(data);
 }
 
@@ -290,7 +285,7 @@ uint8_t eepromRead(const uint16_t addr) {
     RESET(OE_GPIO_Port, OE_Pin);
     // Enable output enable
     // small delay for output to stabilize at 170Mhz, 1 nop takes 1 cycle = 5.88ns, 7 nops = 41.16ns > 35ns which is T_OE
-    delay_cycles(10);
+    delay_cycles(170);
     uint8_t data = eepromReadRaw();
     // Disable output enable
     SET(OE_GPIO_Port, OE_Pin);
@@ -302,7 +297,7 @@ void eepromReadSection(const uint16_t startAddr, const uint16_t length, uint8_t*
     delay_cycles(170);
     for (uint16_t i = 0; i < length; i++) {
         setAddress(startAddr + i);
-        delay_cycles(10);
+        delay_cycles(13);
         buffer[i] = eepromReadRaw();
     }
     SET(OE_GPIO_Port, OE_Pin);
@@ -492,8 +487,9 @@ BaseType_t cmd_writeDataToAddr(char* writeBuffer, size_t writeBufferLength, cons
 }
 /*********************************************************************************************/
 BaseType_t cmd_writeSection(char* writeBuffer, size_t writeBufferLength, const char* commandString) {
+#define MAX_SECTION_DATA 16
     uint32_t addr32 = 0;
-    uint32_t data32[16] = {0};
+    uint32_t data32[MAX_SECTION_DATA] = {0};
 
     if (!parseUnsignedParameter(commandString, 1, &addr32)) {
         COMMAND_OUTPUT("Invalid address parameter\r\n");
@@ -501,7 +497,7 @@ BaseType_t cmd_writeSection(char* writeBuffer, size_t writeBufferLength, const c
     }
 
     uint8_t dataCount = 0;
-    for (int i = 0; i < 16; i++) {
+    for (int i = 0; i < MAX_SECTION_DATA; i++) {
         if (!parseUnsignedParameter(commandString, 2 + i, &data32[i])) {
             if (i == 0) {
                 COMMAND_OUTPUT("Invalid data parameter\r\n");
@@ -534,18 +530,19 @@ BaseType_t cmd_writeSection(char* writeBuffer, size_t writeBufferLength, const c
         dataToInput();
     }
 #define INVALID 0x55FF
+    uint8_t currentData[MAX_SECTION_DATA] = {0};
+    eepromReadSection(addr, dataCount, currentData);
     for (int i = 0; i < dataCount; i++) {
-        uint8_t currentData = eepromRead(addr + i);
         uint8_t data = (uint8_t)data32[i];
-        if (currentData == data) {
+        if (currentData[i] == data) {
             COMMAND_OUTPUT("Data at address %04x is already %02x, no need to write\r\n", addr + i, data);
             data32[i] = INVALID;
             continue;
         }
 
         // can only write 1 bit to 0 since this is flash
-        if ((currentData & data) != data) {
-            COMMAND_OUTPUT("Cannot write 1 to 0 at address %04x, current value is %02x\r\n", addr + i, currentData);
+        if ((currentData[i] & data) != data) {
+            COMMAND_OUTPUT("Cannot write 1 to 0 at address %04x, current value is %02x\r\n", addr + i, currentData[i]);
             data32[i] = INVALID;
             continue;
         }
