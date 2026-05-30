@@ -70,7 +70,10 @@
 #define DATA_GPIOB_MODER_MASK (GPIO_MODER_PIN_MASK(D4_Pin))
 #define DATA_GPIOB_MODER_OUTPUT (GPIO_MODER_PIN_VALUE(D4_Pin, LL_GPIO_MODE_OUTPUT))
 
-#define PULSE_WRITE_PIN() RESET(WE_GPIO_Port, WE_Pin); delay_cycles(5); SET(WE_GPIO_Port, WE_Pin)
+#define PULSE_WRITE_PIN()        \
+    RESET(WE_GPIO_Port, WE_Pin); \
+    delay_cycles(7);             \
+    SET(WE_GPIO_Port, WE_Pin)
 
 typedef struct {
     uint32_t addrDir;

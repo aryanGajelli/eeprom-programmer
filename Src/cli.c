@@ -35,28 +35,7 @@ typedef struct {
 
 static uint16_t uartLastRxSize = 0;
 
-#define BULK_IMAGE_SIZE (32u * 1024u)
-
-typedef enum {
-    BULK_STATE_IDLE = 0,
-    BULK_STATE_RECEIVING,
-    BULK_STATE_READY_TO_PROGRAM,
-    BULK_STATE_ERROR,
-} BulkState_t;
-
-typedef struct {
-    volatile BulkState_t state;
-    uint16_t targetAddr;
-    uint32_t expectedLength;
-    uint32_t receivedLength;
-    uint32_t expectedCrc32;
-    uint32_t runningCrc32;
-} BulkTransfer_t;
-
-static uint8_t bulkImage[BULK_IMAGE_SIZE];
-static volatile BulkTransfer_t bulkTransfer = {
-    .state = BULK_STATE_IDLE,
-};
+#include "uart_bulk.h"
 
 static bool parseUnsignedParameter(const char* commandString, UBaseType_t parameterIndex, uint32_t* valueOut) {
     BaseType_t parameterLength = 0;
@@ -72,59 +51,7 @@ static bool parseUnsignedParameter(const char* commandString, UBaseType_t parame
     return endPtr != parameter && endPtr == parameter + parameterLength;
 }
 
-static uint32_t bulkCrc32Update(uint32_t crc, uint8_t data) {
-    crc ^= (uint32_t)data;
-    for (int i = 0; i < 8; ++i) {
-        if ((crc & 1u) != 0u) {
-            crc = (crc >> 1) ^ 0xEDB88320u;
-        } else {
-            crc >>= 1;
-        }
-    }
-    return crc;
-}
-
-static void bulkTransferReset(void) {
-    bulkTransfer.state = BULK_STATE_IDLE;
-    bulkTransfer.targetAddr = 0;
-    bulkTransfer.expectedLength = 0;
-    bulkTransfer.receivedLength = 0;
-    bulkTransfer.expectedCrc32 = 0;
-    bulkTransfer.runningCrc32 = 0xFFFFFFFFu;
-}
-
-static void bulkTransferBegin(uint16_t targetAddr, uint32_t expectedLength, uint32_t expectedCrc32) {
-    bulkTransferReset();
-    bulkTransfer.targetAddr = targetAddr;
-    bulkTransfer.expectedLength = expectedLength;
-    bulkTransfer.expectedCrc32 = expectedCrc32;
-    bulkTransfer.runningCrc32 = 0xFFFFFFFFu;
-    bulkTransfer.state = BULK_STATE_RECEIVING;
-}
-
-static void bulkTransferConsumeByte(uint8_t byte) {
-    if (bulkTransfer.state != BULK_STATE_RECEIVING) {
-        return;
-    }
-
-    if (bulkTransfer.receivedLength >= bulkTransfer.expectedLength) {
-        bulkTransfer.state = BULK_STATE_ERROR;
-        return;
-    }
-
-    bulkImage[bulkTransfer.receivedLength] = byte;
-    bulkTransfer.receivedLength++;
-    bulkTransfer.runningCrc32 = bulkCrc32Update(bulkTransfer.runningCrc32, byte);
-
-    if (bulkTransfer.receivedLength == bulkTransfer.expectedLength) {
-        uint32_t imageCrc = bulkTransfer.runningCrc32 ^ 0xFFFFFFFFu;
-        if (imageCrc == bulkTransfer.expectedCrc32) {
-            bulkTransfer.state = BULK_STATE_READY_TO_PROGRAM;
-        } else {
-            bulkTransfer.state = BULK_STATE_ERROR;
-        }
-    }
-}
+// CRC helper now implemented in uart_bulk.c
 
 HAL_StatusTypeDef uartStartReceiving(UART_HandleTypeDef* huart) {
     if (huart == &DEBUG_UART_HANDLE) {
@@ -172,12 +99,22 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef* huart, uint16_t Size) {
     uartLastRxSize = Size;
 
     if (rxChunk.length == 0) {
+        if (uartBulk_hasPendingEvent()) {
+            xQueueSendFromISR(uartRxQueue, &rxChunk, &xHigherPriorityTaskWoken);
+            if (xHigherPriorityTaskWoken) {
+                portYIELD();
+            }
+        }
         return;
     }
-
-    if (bulkTransfer.state == BULK_STATE_RECEIVING) {
-        for (uint16_t i = 0; i < rxChunk.length; ++i) {
-            bulkTransferConsumeByte(rxChunk.data[i]);
+    if (uartBulk_on_rx(rxChunk.data, rxChunk.length)) {
+        if (uartBulk_hasPendingEvent()) {
+            UartRxChunk_t wakeChunk;
+            wakeChunk.length = 0;
+            xQueueSendFromISR(uartRxQueue, &wakeChunk, &xHigherPriorityTaskWoken);
+            if (xHigherPriorityTaskWoken) {
+                portYIELD();
+            }
         }
         return;
     }
@@ -205,24 +142,7 @@ void cliTask(void* pvParameters) {
     uprintf("CLI Started. Enter command, or help for more info\n");
     uprintf("%s", PS1);
     while (1) {
-        if (bulkTransfer.state == BULK_STATE_READY_TO_PROGRAM) {
-            uint16_t targetAddr = bulkTransfer.targetAddr;
-            uint32_t expectedLength = bulkTransfer.expectedLength;
-
-            uprintf("Bulk RX complete, programming %lu bytes at 0x%04x\r\n", expectedLength, targetAddr);
-            if (eepromProgramBuffer(targetAddr, expectedLength, bulkImage) != HAL_OK) {
-                uprintf("Bulk programming failed\r\n");
-            } else {
-                uprintf("Bulk programming complete\r\n");
-            }
-            bulkTransferReset();
-            uprintf("%s", PS1);
-            continue;
-        }
-
-        if (bulkTransfer.state == BULK_STATE_ERROR) {
-            uprintf("Bulk transfer failed (overflow or crc mismatch)\r\n");
-            bulkTransferReset();
+        if (uartBulk_poll()) {
             uprintf("%s", PS1);
             continue;
         }
@@ -368,6 +288,11 @@ uint32_t getRunTimeCounterValue() {
 #endif
 
 /*********************************************************************************************/
+BaseType_t cmd_ping(char* writeBuffer, size_t writeBufferLength, const char* commandString) {
+    COMMAND_OUTPUT("pong\n");
+    return pdFALSE;
+}
+/*********************************************************************************************/
 BaseType_t cmd_clearScreen(char* writeBuffer, size_t writeBufferLength, const char* commandString) {
     COMMAND_OUTPUT("\033[2J\033[1;1H");
     return pdFALSE;
@@ -461,11 +386,6 @@ BaseType_t cmd_bulkLoad(char* writeBuffer, size_t writeBufferLength, const char*
     uint32_t length32 = 0;
     uint32_t crc32 = 0;
 
-    if (bulkTransfer.state != BULK_STATE_IDLE) {
-        COMMAND_OUTPUT("Bulk transfer already active\r\n");
-        return pdFALSE;
-    }
-
     if (!parseUnsignedParameter(commandString, 1, &targetAddr32) ||
         !parseUnsignedParameter(commandString, 2, &length32) ||
         !parseUnsignedParameter(commandString, 3, &crc32)) {
@@ -483,18 +403,89 @@ BaseType_t cmd_bulkLoad(char* writeBuffer, size_t writeBufferLength, const char*
         return pdFALSE;
     }
 
-    if (((uint32_t)targetAddr32 + length32) > ((uint32_t)EEPROM_SIZE + 1u)) {
+    if (((uint32_t)targetAddr32 + length32) > ((uint32_t)EEPROM_SIZE)) {
         COMMAND_OUTPUT("Flash range out of bounds\r\n");
         return pdFALSE;
     }
 
-    bulkTransferBegin((uint16_t)targetAddr32, length32, crc32);
+    if (!uartBulk_arm((uint16_t)targetAddr32, length32, crc32)) {
+        COMMAND_OUTPUT("Unable to arm bulk transfer\r\n");
+        return pdFALSE;
+    }
     COMMAND_OUTPUT("READY: send %lu raw bytes now\r\n", length32);
     return pdFALSE;
 }
 /*********************************************************************************************/
 
+BaseType_t cmd_bulkCommit(char* writeBuffer, size_t writeBufferLength, const char* commandString) {
+    HAL_StatusTypeDef res = uartBulk_commit();
+    if (res == HAL_OK) {
+        COMMAND_OUTPUT("Bulk image committed to EEPROM\r\n");
+    } else if (res == HAL_ERROR) {
+        COMMAND_OUTPUT("No buffered image available to commit\r\n");
+    } else {
+        COMMAND_OUTPUT("Commit failed (HAL status %d)\r\n", (int)res);
+    }
+    return pdFALSE;
+}
+/*********************************************************************************************/
+
+BaseType_t cmd_bulkVerify(char* writeBuffer, size_t writeBufferLength, const char* commandString) {
+    uint32_t imgLen = 0;
+    const uint8_t* img = uartBulk_getImage(&imgLen);
+    if (img == NULL || imgLen == 0) {
+        COMMAND_OUTPUT("No buffered image available to verify\r\n");
+        return pdFALSE;
+    }
+    uint16_t target = uartBulk_getTargetAddr();
+    if (target == 0xFFFFu) {
+        COMMAND_OUTPUT("Buffered image has no associated target address\r\n");
+        return pdFALSE;
+    }
+
+    const uint32_t chunk = 256;
+    uint32_t mismatches = 0;
+    uint32_t firstMismatchAddr = 0;
+    uint8_t expected = 0, actual = 0;
+    uint8_t readBuf[chunk];
+
+    /* Ensure GPIOs are configured for readback */
+    addressToOutput();
+    dataToInput();
+
+    for (uint32_t off = 0; off < imgLen; off += chunk) {
+        uint16_t toRead = (uint16_t)((imgLen - off) > chunk ? chunk : (imgLen - off));
+        eepromReadSection((uint16_t)(target + off), toRead, readBuf);
+        for (uint16_t i = 0; i < toRead; ++i) {
+            expected = img[off + i];
+            actual = readBuf[i];
+            if (expected != actual) {
+                mismatches++;
+                if (mismatches == 1) {
+                    firstMismatchAddr = target + off + i;
+                }
+            }
+        }
+    }
+
+    if (mismatches == 0) {
+        COMMAND_OUTPUT("Verify OK: %lu bytes match at 0x%04x\r\n", imgLen, target);
+    } else {
+        COMMAND_OUTPUT("Verify FAILED: %lu mismatches, first at 0x%04lx (expected %02x got %02x)\r\n", mismatches,
+                       (unsigned long)firstMismatchAddr, (unsigned)img[firstMismatchAddr - target], (unsigned)eepromRead((uint16_t)firstMismatchAddr));
+    }
+    return pdFALSE;
+}
+
+/*********************************************************************************************/
+
 static const CLI_Command_Definition_t xCommandList[] = {
+    {
+        "ping",
+        "ping:\r\n  Responds with pong, used to test connection and latency\r\n",
+        cmd_ping,
+        0 /* Number of parameters */
+    },
     {
         "heap",
         "heap <min|cur>:\r\n  Outputs the <min|cur> free heap space\r\n",
@@ -530,6 +521,18 @@ static const CLI_Command_Definition_t xCommandList[] = {
         "bulkLoad <flashAddr> <length> <crc32>:\r\n  Receive raw bytes into RAM, verify CRC32, then program EEPROM\r\n",
         cmd_bulkLoad,
         3 /* Number of parameters */
+    },
+    {
+        "bulkCommit",
+        "bulkCommit:\r\n  Commit previously received bulk image from RAM into EEPROM\r\n",
+        cmd_bulkCommit,
+        0 /* Number of parameters */
+    },
+    {
+        "bulkVerify",
+        "bulkVerify:\r\n  Read back EEPROM and compare to buffered image in RAM\r\n",
+        cmd_bulkVerify,
+        0 /* Number of parameters */
     },
     {
         .pcCommand = NULL /* simply used as delimeter for end of array*/
