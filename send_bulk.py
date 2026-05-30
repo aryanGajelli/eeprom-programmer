@@ -62,11 +62,11 @@ if f"Bulk RX complete and verified (CRC ok), stored RAM bytes: {len(data)}" not 
     raise RuntimeError("Did not receive expected completion message; got: " + res)
 
 
-# res = send_and_recv("bulkCommit\n", timeout=1.0)
-# while "Programming ... Done" not in res:
-#     res += recv()
+res = send_and_recv("bulkCommit\n", timeout=1.0)
+while "Programming ... Done" not in res:
+    res += recv()
 
-# res = send_and_recv("bulkVerify\n")
+res = send_and_recv("bulkVerify\n")
 
 end = time.time()
 print(f"Total time: {end - start:.3f} seconds")

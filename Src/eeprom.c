@@ -49,7 +49,7 @@
 #define DATA_BIT_TO_PIN(data, bit, pin) ((uint32_t)(0u - (((data) >> (bit)) & 1u)) & (pin))
 #define READ_PIN_TO_DATA(idr, pin, dataBit) ((uint8_t)((((idr) & (pin)) >> PIN_SHIFT(pin)) << (dataBit)))
 
-#define MAX_POLLING_TIMEOUT_US 20
+#define MAX_POLLING_TIMEOUT_US 101000
 #define MAX_SECTION_BUFFER 2048
 #define BYTES_PER_LINE 16
 #define MAX_SECTION_DATA 16
@@ -227,6 +227,7 @@ void sectorErase(uint16_t sectorAddr) {
     PULSE_WRITE_PIN();
 
     dataPolling(0x30);
+    HAL_Delay(26);  // Sector erase can take up to 25ms according to the datasheet, add some extra margin
 }
 
 void chipErase(void) {
@@ -249,6 +250,8 @@ void chipErase(void) {
     PULSE_WRITE_PIN();
 
     dataPolling(0x10);
+    // IDK why the data polling isn't working
+    HAL_Delay(101);  // Chip erase can take up to 100ms according to the datasheet, add some extra margin
 }
 
 void eepromWrite(const uint16_t addr, const uint8_t data) {
