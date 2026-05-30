@@ -14,7 +14,7 @@
 
 #ifdef USE_FREERTOS
 #define PRINT_QUEUE_LENGTH 20
-#define PRINT_QUEUE_STRING_SIZE 128
+#define PRINT_QUEUE_STRING_SIZE 164
 #define PRINT_QUEUE_SEND_TIMEOUT_TICKS 10
 
 extern QueueHandle_t printQueue;

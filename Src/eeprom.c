@@ -30,7 +30,6 @@
     } while (0)
 
 #define US_TO_CYCLES(us) ((us) * (F_CLK) / 1000000)
-#define delayUs(us) delay_cycles(US_TO_CYCLES(us))
 
 #define PIN_SHIFT(pin) (__builtin_ctz((unsigned)(pin)))
 #define GPIO_MODER_PIN_MASK(pin) (0x3u << (PIN_SHIFT(pin) * 2))
@@ -70,6 +69,11 @@
 #define DATA_GPIOB_MODER_MASK (GPIO_MODER_PIN_MASK(D4_Pin))
 #define DATA_GPIOB_MODER_OUTPUT (GPIO_MODER_PIN_VALUE(D4_Pin, LL_GPIO_MODE_OUTPUT))
 
+#define PULSE_WRITE_PIN()        \
+    RESET(WE_GPIO_Port, WE_Pin); \
+    delay_cycles(5);             \
+    SET(WE_GPIO_Port, WE_Pin)
+
 typedef struct {
     uint32_t addrDir;
     uint32_t dataDir;
@@ -80,12 +84,20 @@ EEPROMConfig_t eepromConfig = {
     .dataDir = MODE_INPUT};
 
 #define repeat(instruction, num)         \
-    __asm volatile(                        \
+    __asm volatile(                      \
         ".rept " #num "\n\t" instruction \
         "\n\t"                           \
         ".endr\n\t")
 // delay for N cycles
 #define delay_cycles(cycles) repeat("nop", cycles)
+
+void delayUs(uint32_t us) {
+    // Convert microseconds to cycles and delay
+    uint32_t start = DWT->CYCCNT;
+    while ((DWT->CYCCNT - start) < US_TO_CYCLES(us)) {
+        // wait
+    }
+}
 
 void addressToOutput(void) {
     GPIO_InitTypeDef GPIO_InitStruct = {0};
@@ -183,21 +195,6 @@ static inline void eepromWriteRaw(uint16_t addr, uint8_t data) {
     GPIOB->BSRR = gpioBValue | ((DATA_GPIOB_MASK & ~gpioBValue) << 16);
 }
 
-/**
- * @brief Erase a 4Kb sector, only the A15-A12 address lines are used for sector selection, the rest are don't care. So the sectorAddr should be aligned to 0x1000 and only the bits A15-A12 are used.
- * @param sectorAddr The address of the sector to erase
- *                   should be aligned to 0x1000 and only the bits A15-A12 are used,
- *                   the rest are don't care and are stripped
- */
-void sectorErase(uint16_t sectorAddr) {
-    eepromWriteRaw(0x5555, 0xAA);
-    eepromWriteRaw(0x2AAA, 0x55);
-    eepromWriteRaw(0x5555, 0x80);
-    eepromWriteRaw(0x5555, 0xAA);
-    eepromWriteRaw(0x2AAA, 0x55);
-    eepromWriteRaw(sectorAddr & 0xF000, 0x30);
-}
-
 void dataPolling(const uint8_t expectedData) {
     uint32_t startTime = DWT->CYCCNT;
     RESET(OE_GPIO_Port, OE_Pin);
@@ -211,26 +208,68 @@ void dataPolling(const uint8_t expectedData) {
     dataToOutput();
 }
 
-void eepromWrite(const uint16_t addr, const uint8_t data) {
+/**
+ * @brief Erase a 4Kb sector, only the A15-A12 address lines are used for sector selection, the rest are don't care. So the sectorAddr should be aligned to 0x1000 and only the bits A15-A12 are used.
+ * @param sectorAddr The address of the sector to erase
+ *                   should be aligned to 0x1000 and only the bits A15-A12 are used,
+ *                   the rest are don't care and are stripped
+ */
+void sectorErase(uint16_t sectorAddr) {
     eepromWriteRaw(0x5555, 0xAA);
-    RESET(WE_GPIO_Port, WE_Pin);
-    delay_cycles(5);
-    SET(WE_GPIO_Port, WE_Pin);
+    PULSE_WRITE_PIN();
 
     eepromWriteRaw(0x2AAA, 0x55);
-    RESET(WE_GPIO_Port, WE_Pin);
-    delay_cycles(5);
-    SET(WE_GPIO_Port, WE_Pin);
+    PULSE_WRITE_PIN();
+
+    eepromWriteRaw(0x5555, 0x80);
+    PULSE_WRITE_PIN();
+
+    eepromWriteRaw(0x5555, 0xAA);
+    PULSE_WRITE_PIN();
+
+    eepromWriteRaw(0x2AAA, 0x55);
+    PULSE_WRITE_PIN();
+
+    eepromWriteRaw(sectorAddr & 0xF000, 0x30);
+    PULSE_WRITE_PIN();
+
+    dataPolling(0x30);
+}
+
+void chipErase(void) {
+    eepromWriteRaw(0x5555, 0xAA);
+    PULSE_WRITE_PIN();
+
+    eepromWriteRaw(0x2AAA, 0x55);
+    PULSE_WRITE_PIN();
+
+    eepromWriteRaw(0x5555, 0x80);
+    PULSE_WRITE_PIN();
+
+    eepromWriteRaw(0x5555, 0xAA);
+    PULSE_WRITE_PIN();
+
+    eepromWriteRaw(0x2AAA, 0x55);
+    PULSE_WRITE_PIN();
+
+    eepromWriteRaw(0x5555, 0x10);
+    PULSE_WRITE_PIN();
+
+    dataPolling(0x10);
+}
+
+void eepromWrite(const uint16_t addr, const uint8_t data) {
+    eepromWriteRaw(0x5555, 0xAA);
+    PULSE_WRITE_PIN();
+
+    eepromWriteRaw(0x2AAA, 0x55);
+    PULSE_WRITE_PIN();
 
     eepromWriteRaw(0x5555, 0xA0);
-    RESET(WE_GPIO_Port, WE_Pin);
-    delay_cycles(5);
-    SET(WE_GPIO_Port, WE_Pin);
+    PULSE_WRITE_PIN();
 
     eepromWriteRaw(addr, data);
-    RESET(WE_GPIO_Port, WE_Pin);
-    delay_cycles(5);
-    SET(WE_GPIO_Port, WE_Pin);
+    PULSE_WRITE_PIN();
 
     dataPolling(data);
 }
@@ -433,7 +472,6 @@ BaseType_t cmd_writeDataToAddr(char* writeBuffer, size_t writeBufferLength, cons
         MEASURE_EXPR_CYCLES(
             dataToOutput(),
             cycles);
-        data = eepromRead(addr);
         taskEXIT_CRITICAL();
         uprintf("dataToOutput cycles: %lu = %.3f us\n", cycles, cycles / (F_CLK / 1000000.0f));
     }
@@ -443,8 +481,9 @@ BaseType_t cmd_writeDataToAddr(char* writeBuffer, size_t writeBufferLength, cons
     MEASURE_EXPR_CYCLES(
         eepromWrite(addr, data),
         cycles);
-    data = eepromRead(addr);
     taskEXIT_CRITICAL();
+    dataToInput();
+    data = eepromRead(addr);
 
     uprintf("%04x = %02x (cycles: %lu = %.3f us)\n", addr, data, cycles, cycles / (F_CLK / 1000000.0f));
     return pdFALSE;
@@ -534,6 +573,64 @@ BaseType_t cmd_writeSection(char* writeBuffer, size_t writeBufferLength, const c
     uprintf("cycles: %lu = %.3f us\n", cycles, cycles / (F_CLK / 1000000.0f));
     return pdFALSE;
 }
+/*********************************************************************************************/
+BaseType_t cmd_sectorErase(char* writeBuffer, size_t writeBufferLength, const char* commandString) {
+    uint32_t addr32 = 0;
+
+    if (!parseUnsignedParameter(commandString, 1, &addr32)) {
+        COMMAND_OUTPUT("Invalid address parameter\r\n");
+        return pdFALSE;
+    }
+
+    uint16_t addr = (uint16_t)addr32;
+
+    if (addr > EEPROM_SIZE) {
+        COMMAND_OUTPUT("Address out of range, got %u !< %u\r\n", addr, EEPROM_SIZE);
+        return pdFALSE;
+    }
+
+    if (eepromConfig.addrDir != MODE_OUTPUT) {
+        COMMAND_OUTPUT("EEPROM mode not initialized, call eepromEn first\r\n");
+        return pdFALSE;
+    }
+
+    if (eepromConfig.dataDir != MODE_OUTPUT) {
+        dataToOutput();
+    }
+
+    uprintf("Erasing sector at addresses %04x...%04x\n", addr & 0xF000, (addr & 0xF000) + 0x1000 - 1);
+    uint32_t cycles = 0;
+    taskENTER_CRITICAL();
+    MEASURE_EXPR_CYCLES(
+        sectorErase(addr),
+        cycles);
+    taskEXIT_CRITICAL();
+
+    uprintf("cycles: %lu = %.3f us\n", cycles, cycles / (F_CLK / 1000000.0f));
+    return pdFALSE;
+}
+/*********************************************************************************************/
+BaseType_t cmd_chipErase(char* writeBuffer, size_t writeBufferLength, const char* commandString) {
+    if (eepromConfig.addrDir != MODE_OUTPUT) {
+        COMMAND_OUTPUT("EEPROM mode not initialized, call eepromEn first\r\n");
+        return pdFALSE;
+    }
+
+    if (eepromConfig.dataDir != MODE_OUTPUT) {
+        dataToOutput();
+    }
+
+    uprintf("Erasing chip...\n");
+    uint32_t cycles = 0;
+    taskENTER_CRITICAL();
+    MEASURE_EXPR_CYCLES(
+        chipErase(),
+        cycles);
+    taskEXIT_CRITICAL();
+
+    uprintf("cycles: %lu = %.3f us\n", cycles, cycles / (F_CLK / 1000000.0f));
+    return pdFALSE;
+}
 
 static const CLI_Command_Definition_t xCommandList[] = {
     {
@@ -573,13 +670,19 @@ static const CLI_Command_Definition_t xCommandList[] = {
         cmd_writeSection,
         -1 /* Variable number of parameters, at least 2 */
     },
-    // {
-    //     "sectorErase",
-    //     "sectorErase <sectorAddress>:\r\n  Erase the specified sector, sectorAddress will be truncated with 0xF000\r\n"
-    //     "  so only the bits A15-A12 are used for sector selection\r\n",
-    //     cmd_sectorErase,
-    //     1 /* Number of parameters */
-    // },
+    {
+        "sectorErase",
+        "sectorErase <sectorAddress>:\r\n  Erase the specified sector, sectorAddress will be truncated with 0xF000\r\n"
+        "  so only the bits A15-A12 are used for sector selection\r\n",
+        cmd_sectorErase,
+        1 /* Number of parameters */
+    },
+    {
+        "chipErase",
+        "chipErase:\r\n  Erase the entire chip\r\n",
+        cmd_chipErase,
+        0 /* Number of parameters */
+    },
     {
         .pcCommand = NULL /* simply used as delimeter for end of array*/
     }};
