@@ -40,6 +40,13 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
     if (GPIO_Pin == CLK_Pin) {
         // if (HAL_GPIO_ReadPin(CLK_GPIO_Port, CLK_Pin) == GPIO_PIN_RESET) return;
         if (!cpuDebugEnabled) return;
+        __NOP();
+        __NOP();
+        __NOP();
+        __NOP();
+        __NOP();
+        __NOP();
+        // HAL_Delay(1);
         
         uint16_t addr = 0;
         uint8_t data = 0;

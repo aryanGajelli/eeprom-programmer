@@ -296,15 +296,18 @@ HAL_StatusTypeDef eepromProgramBuffer(uint16_t startAddr, uint32_t length, const
 
     if (length >= EEPROM_SIZE - SECTOR_SIZE) {
         uprintf("Erasing entire chip ... ");
+        vTaskDelay(pdMS_TO_TICKS(2));  // Small delay to allow the print to flush before starting the long erase operation
         chipErase();
     } else {
         uprintf("Erasing sectors ... 0x%04lx to 0x%04lx ", firstSector, lastSector);
+        vTaskDelay(pdMS_TO_TICKS(2));  // Small delay to allow the print to flush before starting the long erase operation
         for (uint32_t sector = firstSector; sector <= lastSector; sector += SECTOR_SIZE) {
             sectorErase((uint16_t)sector);
         }
     }
 
     uprintf("Done\nProgramming ... ");
+    vTaskDelay(pdMS_TO_TICKS(2));  // Small delay to allow the print to flush before starting the long erase operation
     taskENTER_CRITICAL();
     uint32_t cycles = 0;
     uint32_t _mc_start = DWT->CYCCNT;

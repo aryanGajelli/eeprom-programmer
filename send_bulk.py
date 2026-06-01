@@ -4,14 +4,15 @@ import serial
 import atexit
 import colorama
 from colorama import Fore
+import argparse
+
 colorama.init()
+
+ser: serial.Serial = None
+
 
 def compute_crc32(data: bytes) -> int:
     return binascii.crc32(data) & 0xFFFFFFFF
-
-
-ser = serial.Serial(port="COM4", baudrate=15000000)
-atexit.register(ser.close)
 
 
 def recv(timeout=0.1):
@@ -21,52 +22,64 @@ def recv(timeout=0.1):
         chunk = ser.read_all()
         if chunk:
             data += chunk
+        if chunk:
+            print(f"{Fore.GREEN}{chunk.decode()}{Fore.RESET}", end="")
 
-    out = data.decode()
-    print(f"{Fore.GREEN}{out.strip()}{Fore.RESET}", end=" ")
-    return out
+    return data.decode()
+
 
 def send_and_recv(cmd, timeout=0.1):
     print(f"{Fore.BLUE}{cmd.strip()}{Fore.RESET}")
     ser.write(cmd.encode())
     return recv(timeout)
 
-res = send_and_recv("ping\n")  # clear buffer
-if "pong" not in res.strip():
-    raise ConnectionError("Did not receive expected pong response; got: " + res)
+
+def parse_args():
+    p = argparse.ArgumentParser(description="Send a binary file to the EEPROM programmer in bulk mode")
+    p.add_argument('port', help='Serial port (e.g. COM4 or /dev/ttyUSB0)')
+    p.add_argument('file', help='Binary file to send')
+    return p.parse_args()
 
 
-with open("rom.bin", "rb") as f:
-    data = f.read()
+if __name__ == "__main__":
+    args = parse_args()
+    ser = serial.Serial(port=args.port, baudrate=15000000)
+    atexit.register(ser.close)
 
-assert len(data) % 4096 == 0, f"Expected file size to be a multiple of 4096 bytes got {len(data)}"
+    res = send_and_recv("ping\n")  # clear buffer
+    if "pong" not in res.strip():
+        raise ConnectionError("Did not receive expected pong response; got: " + res)
 
-EEPROM_SIZE = 65536
-START_ADDRESS = 0x0
+    with open(args.file, "rb") as f:
+        data = f.read()
 
-if START_ADDRESS + len(data) > EEPROM_SIZE:
-    raise ValueError(f"Start address 0x{START_ADDRESS:04x} + {len(data):04x} is out of bounds for EEPROM size {EEPROM_SIZE} bytes")
+    assert len(data) % 4096 == 0, f"Expected file size to be a multiple of 4096 bytes got {len(data)}"
 
-start = time.time()
-res = send_and_recv(f"bulkLoad 0x{START_ADDRESS:04x} {len(data)} {compute_crc32(data)}\n")
-if "READY" not in res.strip():
-    raise RuntimeError("Did not receive expected READY response; got: " + res)
+    EEPROM_SIZE = 65536
+    START_ADDRESS = 0x0000
 
-CHUNK_SIZE = 256
-for chunk in range(0, len(data), CHUNK_SIZE):
-    ser.write(data[chunk:chunk+CHUNK_SIZE])
-    # time.sleep(0.001)  # small delay to allow processing
+    if START_ADDRESS + len(data) > EEPROM_SIZE:
+        raise ValueError(f"Start address 0x{START_ADDRESS:04x} + {len(data):04x} is out of bounds for EEPROM size {EEPROM_SIZE} bytes")
 
-res = recv()
-if f"Bulk RX complete and verified (CRC ok), stored RAM bytes: {len(data)}" not in res:
-    raise RuntimeError("Did not receive expected completion message; got: " + res)
+    start = time.time()
+    res = send_and_recv(f"bulkLoad 0x{START_ADDRESS:04x} {len(data)} {compute_crc32(data)}\n")
+    if "READY" not in res.strip():
+        raise RuntimeError("Did not receive expected READY response; got: " + res)
 
+    CHUNK_SIZE = 256
+    for chunk in range(0, len(data), CHUNK_SIZE):
+        ser.write(data[chunk:chunk+CHUNK_SIZE])
+        # time.sleep(0.001)  # small delay to allow processing
 
-res = send_and_recv("bulkCommit\n", timeout=1.0)
-while "Programming ... Done" not in res:
-    res += recv()
+    res = recv()
+    if f"Bulk RX complete and verified (CRC ok), stored RAM bytes: {len(data)}" not in res:
+        raise RuntimeError("Did not receive expected completion message; got: " + res)
 
-res = send_and_recv("bulkVerify\n")
+    res = send_and_recv("bulkCommit\n", timeout=1.0)
+    while "Programming ... Done" not in res:
+        res += recv()
 
-end = time.time()
-print(f"Total time: {end - start:.3f} seconds")
+    res = send_and_recv("bulkVerify\n")
+
+    end = time.time()
+    print(f"Total time: {end - start:.3f} seconds")

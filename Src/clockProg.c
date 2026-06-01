@@ -41,21 +41,21 @@ BaseType_t cmd_clk_init(char* writeBuffer, size_t writeBufferLength, const char*
     // Keep PLL VCO in the 600..900 MHz range (AN619): 25 MHz * 24 = 600 MHz.
     // Use PLLA multiplier 24 to get the lowest VCO allowed (600 MHz),
     // then set multisynth to 900 and R-divider to 128 to produce ~5.2 kHz.
-    if (setupPLLInt(SI5351_PLL_A, 24) != HAL_OK) {
+    if (setupPLLInt(SI5351_PLL_A, 30) != HAL_OK) {
         COMMAND_OUTPUT("Failed to set up PLL A\n");
         return pdFALSE;
     }
 
     // CLK0: 10 MHz = (25MHz + small offset) * 30 / (75 + 1 * 3500)
-    if (setupMultisynth(0, SI5351_PLL_A, 450, 0, 1) != HAL_OK) {
+    if (setupMultisynth(0, SI5351_PLL_A, 75, 1, 3500) != HAL_OK) {
         COMMAND_OUTPUT("Failed to set up multisynth 0\n");
         return pdFALSE;
     }
 
-    if (setupRdiv(0, SI5351_R_DIV_128) != HAL_OK) {
-        COMMAND_OUTPUT("Failed to set up R-divider for CLK0\n");
-        return pdFALSE;
-    }
+    // if (setupRdiv(0, SI5351_R_DIV_128) != HAL_OK) {
+    //     COMMAND_OUTPUT("Failed to set up R-divider for CLK0\n");
+    //     return pdFALSE;
+    // }
 
     COMMAND_OUTPUT("Clocks initialized successfully\n");
     return pdFALSE;
