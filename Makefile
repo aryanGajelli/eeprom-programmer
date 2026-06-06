@@ -41,6 +41,20 @@ all:
 flash:
 	STM32_Programmer_CLI -c port=SWD -w $(BIN_FILE) 0x08000000 -v -hardRst
 
+t6502:
+	@echo -e "$(BLUE_COLOR)Building: $(RED_COLOR)65C02$(NO_COLOR)"
+	vasm6502_oldstyle.exe .\6502\main.s -Fbin -wdc02 -dotdir -quiet -pad=0xea -wfail -o rom.bin
+	@echo -e -n "$(GREEN_COLOR)65C02 ROM built: $(BLUE_COLOR)rom.bin$(NO_COLOR) "
+	@stat -L -c %s rom.bin
+
+
+flash_6502:
+	@python .\send_bulk.py COM4 .\rom.bin
+
+verify_6502:
+	@python .\send_bulk.py COM4 .\rom.bin --verify-only
+
 clean:
 	rm -rf $(BIN_DIR)
+	rm -f rom.bin
 

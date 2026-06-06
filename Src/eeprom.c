@@ -270,6 +270,8 @@ void eepromWrite(const uint16_t addr, const uint8_t data) {
     dataPolling(data);
 }
 
+uint8_t sectorBuffer[SECTOR_SIZE] = {0};
+
 HAL_StatusTypeDef eepromProgramBuffer(uint16_t startAddr, uint32_t length, const uint8_t* buffer) {
     if (buffer == NULL) {
         return HAL_ERROR;
@@ -287,25 +289,46 @@ HAL_StatusTypeDef eepromProgramBuffer(uint16_t startAddr, uint32_t length, const
         addressToOutput();
     }
 
-    if (eepromConfig.dataDir != MODE_OUTPUT) {
-        dataToOutput();
-    }
-
     uint32_t firstSector = (uint32_t)startAddr & 0xF000u;
     uint32_t lastSector = ((uint32_t)startAddr + length - 1u) & 0xF000u;
 
     if (length >= EEPROM_SIZE - SECTOR_SIZE) {
+        if (eepromConfig.dataDir != MODE_OUTPUT) {
+            dataToOutput();
+        }
         uprintf("Erasing entire chip ... ");
         vTaskDelay(pdMS_TO_TICKS(2));  // Small delay to allow the print to flush before starting the long erase operation
         chipErase();
     } else {
-        uprintf("Erasing sectors ... 0x%04lx to 0x%04lx ", firstSector, lastSector);
-        vTaskDelay(pdMS_TO_TICKS(2));  // Small delay to allow the print to flush before starting the long erase operation
+        uprintf("Checking sectors to erase ... \n");
+        vTaskDelay(pdMS_TO_TICKS(1));
+
         for (uint32_t sector = firstSector; sector <= lastSector; sector += SECTOR_SIZE) {
-            sectorErase((uint16_t)sector);
+            dataToInput();
+
+            eepromReadSection((uint16_t)sector, SECTOR_SIZE, sectorBuffer);
+            uint32_t sectorStart = (sector < startAddr) ? startAddr : sector;
+            uint32_t sectorEnd = ((sector + SECTOR_SIZE) > ((uint32_t)startAddr + length)) ? ((uint32_t)startAddr + length)
+                                                                                           : (sector + SECTOR_SIZE);
+
+            // Only erase if any byte in the overlapping range would need a 0->1 transition.
+            for (uint32_t addr = sectorStart; addr < sectorEnd; ++addr) {
+                uint32_t bufferIndex = addr - (uint32_t)startAddr;
+                uint32_t sectorIndex = addr - sector;
+
+                if ((sectorBuffer[sectorIndex] & buffer[bufferIndex]) != buffer[bufferIndex]) {
+                    uprintf("Erasing sectors ... 0x%04lx\n", sector);
+                    vTaskDelay(pdMS_TO_TICKS(1));  // Small delay to allow the print to flush before starting the long erase operation
+                    dataToOutput();
+                    sectorErase((uint16_t)sector);
+                    break;
+                }
+            }
         }
     }
-
+    if (eepromConfig.dataDir != MODE_OUTPUT) {
+        dataToOutput();
+    }
     uprintf("Done\nProgramming ... ");
     vTaskDelay(pdMS_TO_TICKS(2));  // Small delay to allow the print to flush before starting the long erase operation
     taskENTER_CRITICAL();
@@ -340,7 +363,7 @@ void eepromReadSection(const uint16_t startAddr, const uint16_t length, uint8_t*
     RESET(OE_GPIO_Port, OE_Pin);
     for (uint16_t i = 0; i < length; i++) {
         setAddress(startAddr + i);
-        delay_cycles(5);
+        delay_cycles(6);
         buffer[i] = eepromReadRaw();
     }
     SET(OE_GPIO_Port, OE_Pin);
@@ -648,6 +671,7 @@ BaseType_t cmd_sectorErase(char* writeBuffer, size_t writeBufferLength, const ch
     }
 
     uprintf("Erasing sector at addresses %04x...%04x\n", addr & 0xF000, (addr & 0xF000) + 0x1000 - 1);
+    vTaskDelay(pdMS_TO_TICKS(2));  // Small delay to allow the print to flush before starting the long erase operation
     uint32_t cycles = 0;
     taskENTER_CRITICAL();
     MEASURE_EXPR_CYCLES(

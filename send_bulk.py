@@ -38,6 +38,7 @@ def parse_args():
     p = argparse.ArgumentParser(description="Send a binary file to the EEPROM programmer in bulk mode")
     p.add_argument('port', help='Serial port (e.g. COM4 or /dev/ttyUSB0)')
     p.add_argument('file', help='Binary file to send')
+    p.add_argument("--verify-only", action="store_true", help="Only perform verification, do not write data")
     return p.parse_args()
 
 
@@ -75,9 +76,10 @@ if __name__ == "__main__":
     if f"Bulk RX complete and verified (CRC ok), stored RAM bytes: {len(data)}" not in res:
         raise RuntimeError("Did not receive expected completion message; got: " + res)
 
-    res = send_and_recv("bulkCommit\n", timeout=1.0)
-    while "Programming ... Done" not in res:
-        res += recv()
+    if not args.verify_only:
+        res = send_and_recv("bulkCommit\n", timeout=1.0)
+        while "Programming ... Done" not in res:
+            res += recv()
 
     res = send_and_recv("bulkVerify\n")
 
