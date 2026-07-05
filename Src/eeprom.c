@@ -2,6 +2,7 @@
 
 #include <stdbool.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "FreeRTOS.h"
 #include "FreeRTOS_CLI.h"
@@ -495,6 +496,70 @@ BaseType_t cmd_readSection(char* writeBuffer, size_t writeBufferLength, const ch
     return pdFALSE;
 }
 /*********************************************************************************************/
+BaseType_t cmd_hexdump(char* writeBuffer, size_t writeBufferLength, const char* commandString) {
+    uint16_t startAddr = 0;
+    uint16_t endAddr = MAX_ADDRESSABLE_SIZE - 1;  // Dump the full 64 kB EEPROM address space
+
+    bool printStar = true;
+    bool printLine = true;
+    bool hasPrevLine = false;
+    uint8_t previousLine[BYTES_PER_LINE] = {0};
+
+    uprintf("\n      00 01 02 03 04 05 06 07  08 09 0a 0b 0c 0d 0e 0f\n");
+    uint32_t cyclesTotal = 0;
+    for (uint32_t section = startAddr; section <= endAddr; section += MAX_SECTION_BUFFER) {
+        uint16_t bytesToRead = MAX_SECTION_BUFFER;
+        if (section + bytesToRead > (uint32_t)endAddr + 1u) {
+            bytesToRead = (uint16_t)((uint32_t)endAddr + 1u - section);
+        }
+        taskENTER_CRITICAL();
+        uint32_t cycles = 0;
+        MEASURE_EXPR_CYCLES(
+            eepromReadSection((uint16_t)section, bytesToRead, sectionBuffer),
+            cycles);
+        taskEXIT_CRITICAL();
+        cyclesTotal += cycles;
+
+        for (uint32_t offset = 0; offset < bytesToRead; offset += BYTES_PER_LINE) {
+            uint32_t addr = section + offset;
+            uint8_t* currentLine = sectionBuffer + offset;
+            bool isLastLine = addr == ((uint32_t)endAddr + 1u - BYTES_PER_LINE);
+
+            if (!hasPrevLine || isLastLine || addr + BYTES_PER_LINE > (uint32_t)endAddr + 1u) {
+                // always print the first line, and always print the final row
+                printLine = true;
+            } else {
+                printLine = memcmp(currentLine, previousLine, BYTES_PER_LINE) != 0;
+            }
+
+            if (!printLine) {
+                if (printStar) {
+                    uprintf("*\n");
+                    printStar = false;
+                }
+                continue;
+            }
+
+            printStar = true;
+            uprintf("%04lx: %02x %02x %02x %02x %02x %02x %02x %02x  %02x %02x %02x %02x %02x %02x %02x %02x  ", addr,
+                    currentLine[0], currentLine[1], currentLine[2], currentLine[3], currentLine[4], currentLine[5], currentLine[6],
+                    currentLine[7], currentLine[8], currentLine[9], currentLine[10], currentLine[11], currentLine[12], currentLine[13],
+                    currentLine[14], currentLine[15]);
+            #define PRINTABLE(c) (((c) >= 32 && (c) <= 126) ? (c) : '.')
+            uprintf("|%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c%c|\n", PRINTABLE(currentLine[0]), PRINTABLE(currentLine[1]), PRINTABLE(currentLine[2]), PRINTABLE(currentLine[3]), PRINTABLE(currentLine[4]), PRINTABLE(currentLine[5]),
+                    PRINTABLE(currentLine[6]), PRINTABLE(currentLine[7]), PRINTABLE(currentLine[8]), PRINTABLE(currentLine[9]),
+                    PRINTABLE(currentLine[10]), PRINTABLE(currentLine[11]), PRINTABLE(currentLine[12]), PRINTABLE(currentLine[13]),
+                    PRINTABLE(currentLine[14]), PRINTABLE(currentLine[15]));
+
+            memcpy(previousLine, currentLine, BYTES_PER_LINE);
+            hasPrevLine = true;
+        }
+    }
+
+    uprintf("Total cycles: %lu = %.3f us\n", cyclesTotal, cyclesTotal / (F_CLK / 1000000.0f));
+    return pdFALSE;
+}
+/*********************************************************************************************/
 BaseType_t cmd_writeDataToAddr(char* writeBuffer, size_t writeBufferLength, const char* commandString) {
     uint32_t addr32 = 0;
     uint32_t data32 = 0;
@@ -729,6 +794,12 @@ static const CLI_Command_Definition_t xCommandList[] = {
         "readSection <startAddress> <endAddress>:\r\n  Read values from the specified EEPROM address range\r\n",
         cmd_readSection,
         2 /* Number of parameters */
+    },
+    {
+        "hexdump",
+        "hexdump:\r\n  Similar to unix hexdump -C command, read and display the entire EEPROM contents in a formatted way\r\n",
+        cmd_hexdump,
+        0 /* Number of parameters */
     },
     {
         "writeAddr",

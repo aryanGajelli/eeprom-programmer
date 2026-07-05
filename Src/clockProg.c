@@ -46,8 +46,8 @@ BaseType_t cmd_clk_init(char* writeBuffer, size_t writeBufferLength, const char*
         return pdFALSE;
     }
 
-    // CLK0: 10 MHz = (25MHz + small offset) * 30 / (75 + 1 * 3500)
-    if (setupMultisynth(0, SI5351_PLL_A, 75, 1, 3500) != HAL_OK) {
+    // CLK0: 15 MHz = (25MHz + small offset) * 30 / (49 + 9999 / 1000)
+    if (setupMultisynth(0, SI5351_PLL_A, 49, 999, 1000) != HAL_OK) {
         COMMAND_OUTPUT("Failed to set up multisynth 0\n");
         return pdFALSE;
     }
@@ -149,20 +149,20 @@ BaseType_t cmd_stop_pwm(char* writeBuffer, size_t writeBufferLength, const char*
 
 static const CLI_Command_Definition_t xCommandList[] = {
     {
-        "clk_init",
+        "clkInit",
         "clk_init:\r\n  Initialize the Si5351 and set to 10MHz on CLK0 and enable clocks\r\n",
         cmd_clk_init,
         0 /* Number of parameters */
     },
     {
-        "enableClocks",
-        "enableClocks:\r\n  Enable the clocks\r\n",
+        "clkEn",
+        "clkEn:\r\n  Enable the clocks\r\n",
         cmd_enable_clocks,
         0 /* Number of parameters */
     },
     {
-        "disableClocks",
-        "disableClocks:\r\n  Disable the clocks\r\n",
+        "clkDis",
+        "clkDis:\r\n  Disable the clocks\r\n",
         cmd_disable_clocks,
         0 /* Number of parameters */
     },
@@ -173,14 +173,14 @@ static const CLI_Command_Definition_t xCommandList[] = {
         0 /* Number of parameters */
     },
     {
-        "set_pllA",
-        "set_pllA <mul> <num> <den>:\r\n  PLL A = 25MHz * (mul * num / den)\r\n  PLL A must be in [600MHz, 900MHz]\r\n",
+        "pllA",
+        "pllA <mul> <num> <den>:\r\n  PLL A = 25MHz * (mul + num / den)\r\n  PLL A must be in [600MHz, 900MHz]\r\n",
         cmd_set_pllA,
         3 /* Number of parameters */
     },
     {
-        "set_multisynth",
-        "set_multisynth <ch> <mul> <num> <den>:\r\n  CLK_ch = PLLA * (mul * num / den)\r\n  ch must be in [0, 2]\r\n",
+        "synth",
+        "synth <ch> <mul> <num> <den>:\r\n  CLK_ch = PLLA / (mul + num / den)\r\n  ch must be in [0, 2]\r\n",
         cmd_set_multisynth,
         4 /* Number of parameters */
     },

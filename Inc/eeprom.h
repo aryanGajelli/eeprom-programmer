@@ -8,6 +8,7 @@
 #define EEPROM_SIZE (1u << 16u)  // 64 kB
 #define MAX_ADDRESS ((uint16_t)(EEPROM_SIZE - 1u))
 #define SECTOR_SIZE (0x1000u)  // 4 kB
+#define MAX_ADDRESSABLE_SIZE (1u << 15u)  // 32 kB, due to the way the address lines are wired, only A0-A14 are used for addressing
 
 #define RESET(GPIOx, GPIO_Pin) (GPIOx->BRR = (uint32_t)GPIO_Pin)
 #define SET(GPIOx, GPIO_Pin) (GPIOx->BSRR = (uint32_t)GPIO_Pin)
