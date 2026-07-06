@@ -70,7 +70,6 @@ if __name__ == "__main__":
     CHUNK_SIZE = 256
     for chunk in range(0, len(data), CHUNK_SIZE):
         ser.write(data[chunk:chunk+CHUNK_SIZE])
-        # time.sleep(0.001)  # small delay to allow processing
 
     res = recv()
     if f"Bulk RX complete and verified (CRC ok), stored RAM bytes: {len(data)}" not in res:
@@ -84,4 +83,4 @@ if __name__ == "__main__":
     res = send_and_recv("bulkVerify\n")
 
     end = time.time()
-    print(f"Total time: {end - start:.3f} seconds")
+    print(f"\nTotal time: {end - start:.3f} seconds")

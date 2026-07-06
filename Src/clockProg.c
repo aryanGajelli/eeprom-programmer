@@ -46,7 +46,7 @@ BaseType_t cmd_clk_init(char* writeBuffer, size_t writeBufferLength, const char*
         return pdFALSE;
     }
 
-    // CLK0: 15 MHz = (25MHz + small offset) * 30 / (49 + 9999 / 1000)
+    // CLK0: 15 MHz = (25MHz + small offset) * 30 / (49 + 999 / 1000)
     if (setupMultisynth(0, SI5351_PLL_A, 49, 999, 1000) != HAL_OK) {
         COMMAND_OUTPUT("Failed to set up multisynth 0\n");
         return pdFALSE;

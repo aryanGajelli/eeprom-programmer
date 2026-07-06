@@ -1,18 +1,23 @@
+; Memory
 PORTB = $6000
 PORTA = $6001
 
 DDRB = $6002
 DDRA = $6003
 
+; Constants
 E = 0b10000000
 RW = 0b01000000
 RS = 0b00100000
 
+CLK_SPEED = 15000000
 
-; Variable Pointers
-LINE_DATA = $00					; zp pointer to line data
+; Variables
+sleepHi = $00
+sleepLo = $01
 
-
+lineHi = $02
+lineLo = $03
 
 ; CODE Section
 	.org $8000
@@ -36,27 +41,66 @@ reset:
 	lda #0b00110110		  		; Function Set, 8-bit mode, extended instruction set, graphics ON
 	jsr lcd_instruction
 
-	jsr clr_gdram				; Clear GDRAM
-
-	lda #0b10000100				; Set GDRAM vertical AC to row number
-	jsr lcd_instruction
-
-	lda #0b10000000				; Set GDRAM horizontal AC to 0x00
-	jsr lcd_instruction
+	; first 8 pixels are set, rest are 0
+	lda #0xff
+	sta lineHi
+	stz lineLo
 
 	ldx #0
-write_8_1:
-	lda #0x55				
+
+move:
+	jsr clr_gdram
+	ldy #0
+
+write_block:
+	tya
+	ora #0b10000000				; Set GDRAM vertical AC to row number
+	jsr lcd_instruction
+
+	txa
+	; divide x by 8 to get the column number (0-15) for the GDRAM horizontal AC
+	lsr
+	lsr
+	lsr
+	and #0b00000111				; Mask out all bits except lower 3 bits
+	ora #0b10000000				; Set GDRAM horizontal AC to 0x00
+	jsr lcd_instruction
+
+	lda lineHi
 	jsr lcd_write
+
+	lda lineLo
+	jsr lcd_write
+
+	
+	iny
+	cpy #8
+	bne write_block				; If at last row stop
+
+	; rotate right the 16-bit zero-page value in lineHi/lineLo by 1 bit
+	; lineHi bit 0 -> carry -> lineLo bit 7
+	lda lineLo
+	lsr
+	ror lineHi
+	ror lineLo
+
 	inx
-	cpx #8						; If at last col stop
-	bne write_8_1
+
+	; Sleep so display is visible
+	phx
+	ldx #100
+	jsr sleep_ms				
+	plx
+
+	jmp move					; Start over with next block of 8 rows
+
 
 loop:
 	jmp loop
 
 
 clr_gdram:
+	; https://www.instructables.com/The-Secrets-of-an-Inexpensive-Ubiquitous-Chinese-L/
 	pha
 	phy
 	phx
@@ -80,8 +124,13 @@ write_8:
 	bne write_8
 
 	iny
-	cpy #32	
+	cpy #32
 	bne write_row				; If at last row stop
+	
+	lda #0				
+	jsr lcd_write
+	lda #0				
+	jsr lcd_write
 
 	plx
 	ply
@@ -120,11 +169,6 @@ lcd_wait:
 	sta PORTA
 	lda #(RW | E)				; RW high to read, E high to latch
 	sta PORTA
-	; Need a dummy read for st7920
-	lda #RW						; RW high to read
-	sta PORTA
-	lda #(RW | E)				; RW high to read, E high to latch
-	sta PORTA
 busy_read:
 	lda PORTB					; Read busy flag from PORTB
 	and #0b10000000				; Mask out all bits except bit 7 (busy flag)
@@ -139,6 +183,33 @@ busy_read:
 
 	lda #0b11111111				; PORTB to output
 	sta DDRB					; Set PORTB as input
+	pla
+	rts
+
+
+ONE_MS = (CLK_SPEED/1000)-13387		; Calibrated preload for about 1ms per count at 15 MHz
+; Put the amount of time to sleep in the x register
+sleep_ms:
+	; Calibrated for the current DEC/LDA/BNE loop timing at 15 MHz
+	pha
+
+sleep_x_ms:
+	lda #ONE_MS>>8
+	sta sleepHi
+	lda #ONE_MS&0xff
+	sta sleepLo
+	
+sleep_1ms:
+	dec sleepLo
+	lda sleepLo
+	bne sleep_1ms
+	dec sleepHi
+	lda sleepHi
+	bne sleep_1ms
+
+	dex
+	bne sleep_x_ms
+
 	pla
 	rts
 
