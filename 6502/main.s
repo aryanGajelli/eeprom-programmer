@@ -41,15 +41,15 @@ reset:
 	lda #0b00110110		  		; Function Set, 8-bit mode, extended instruction set, graphics ON
 	jsr lcd_instruction
 
+	jsr clr_gdram
+
 	; first 8 pixels are set, rest are 0
 	lda #0xff
 	sta lineHi
 	stz lineLo
 
-	ldx #0
-
 move:
-	jsr clr_gdram
+
 	ldy #0
 
 write_block:
@@ -57,13 +57,7 @@ write_block:
 	ora #0b10000000				; Set GDRAM vertical AC to row number
 	jsr lcd_instruction
 
-	txa
-	; divide x by 8 to get the column number (0-15) for the GDRAM horizontal AC
-	lsr
-	lsr
-	lsr
-	and #0b00000111				; Mask out all bits except lower 3 bits
-	ora #0b10000000				; Set GDRAM horizontal AC to 0x00
+	lda #0b10000000				; Set GDRAM horizontal AC to 0x00
 	jsr lcd_instruction
 
 	lda lineHi
@@ -84,13 +78,9 @@ write_block:
 	ror lineHi
 	ror lineLo
 
-	inx
-
 	; Sleep so display is visible
-	phx
-	ldx #100
+	ldx #200
 	jsr sleep_ms				
-	plx
 
 	jmp move					; Start over with next block of 8 rows
 
